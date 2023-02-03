@@ -13,9 +13,11 @@ private:
     
 
 public:
-    float R_g;
+    float R_gE;
+    float R_gD;
     bool R_dir = true;
-    float L_g;
+    float L_gE;
+    float L_gD;
     bool L_dir = true;
     // pwm info
     int R_slice;

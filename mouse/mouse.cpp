@@ -12,9 +12,11 @@
 
 mouse::mouse()
 {
-    this->R_g = 1;
+    this->R_gE = 1;
+    this->R_gD = 1;
     this->R_dir = true;
-    this->L_g = 1;
+    this->L_gE = 1;
+    this->L_gD = 1;
     this->L_dir = true;
     this->R_slice = pwm_gpio_to_slice_num(R_F);
     this->L_slice = pwm_gpio_to_slice_num(L_F);
@@ -22,8 +24,8 @@ mouse::mouse()
 
 void mouse::move(float speedL, float speedR)
 {
-    uint16_t L_level = std::floor((L_g * abs(speedL) / float(100)) * float(65535));
-    uint16_t R_level = std::floor((R_g * abs(speedR) / float(100)) * float(65535));
+    uint16_t L_level = std::floor((L_gE*L_gD * abs(speedL) / float(100)) * float(65535));
+    uint16_t R_level = std::floor((R_gE*R_gD * abs(speedR) / float(100)) * float(65535));
     L_dir = speedL >= 0;
     R_dir = speedR >= 0;
     pwm_set_both_levels(L_slice, L_dir * (L_level), !L_dir * (L_level));
@@ -34,8 +36,8 @@ void mouse::move(float speedL, float speedR)
 
 void mouse::move(float speed)
 {
-    uint16_t L_level = std::floor((L_g * speed / 100) * float(65535));
-    uint16_t R_level = std::floor((R_g * speed / 100) * float(65535));
+    uint16_t L_level = std::floor((L_gE*L_gD * speed / 100) * float(65535));
+    uint16_t R_level = std::floor((R_gE*R_gD * speed / 100) * float(65535));
     L_dir = L_level >= 0;
     R_dir = R_level >= 0;
     pwm_set_both_levels(L_slice, L_dir * (L_level), !L_dir * (L_level));
@@ -130,15 +132,15 @@ void mouse::straighten(float speed, uint16_t left, uint16_t right)
     {
         // decrease right
         // R_g = float((120-deltaDist)/120);
-        L_g = 1 - (m * deltaDist * deltaDist);
-        R_g = 1;
-        if (L_g > 1)
+        L_gD = 1 - (m * deltaDist * deltaDist);
+        R_gD = 1;
+        if (L_gD > 1)
         {
-            L_g = 1;
+            L_gD = 1;
         }
-        if (L_g < 0)
+        if (L_gD < 0)
         {
-            L_g = 0;
+            L_gD = 0;
         }
         /*
         if((R_g - c1)>=lower){
@@ -155,15 +157,15 @@ void mouse::straighten(float speed, uint16_t left, uint16_t right)
     {
         //  R_g = float((120-deltaDist)/120);
 
-        R_g = 1 - (m * deltaDist * deltaDist);
-        L_g = 1;
-        if (R_g > 1)
+        R_gD = 1 - (m * deltaDist * deltaDist);
+        L_gD = 1;
+        if (R_gD > 1)
         {
-            R_g = 1;
+            R_gD = 1;
         }
-        if (R_g < 0)
+        if (R_gD < 0)
         {
-            R_g = 0;
+            R_gD = 0;
         }
         /*
         if ((L_g - c1) >= lower)
@@ -194,29 +196,32 @@ int mouse::moveStraight(float inputSpeed, int &inticksL, int &inticksR)
     float e = dR - dL;
     float c1 = .05;
 
+    // Create a threshold that the encoders will not try and tweak the matching but rather increase up to 
+    // the top of the available speed. Do this by keeping the same delta between them but shift both up till one 
+    // is at the max value of 1
     
     if (e > 0)
     {
         // if left can speed up
-        if ((L_g + c1) <= 1)
+        if ((L_gE + c1) <= 1)
         {
-            L_g = L_g + c1;
+            L_gE = L_gE + c1;
         }
         else
         {
             /*float rem = 1 - L_g;
             L_g = 1;
             R_g = R_g - rem;*/
-            R_g = R_g - c1;
+            R_gE = R_gE - c1;
 
         }
     }
     else if (e < 0)
     {
         // if left can speed up
-        if ((R_g + c1) <= 1)
+        if ((R_gE + c1) <= 1)
         {
-            R_g = R_g + c1;
+            R_gE = R_gE + c1;
         }
         else
         {
@@ -224,7 +229,7 @@ int mouse::moveStraight(float inputSpeed, int &inticksL, int &inticksR)
             float rem = 1 - R_g;
             R_g = 1;
             L_g = L_g - rem;*/
-             L_g = L_g - c1;
+             L_gE = L_gE - c1;
         }
     }
 
