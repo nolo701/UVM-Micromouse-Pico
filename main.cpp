@@ -1,5 +1,4 @@
 #include "mouse/define.h"
-#include "mouse/mouse.h"
 
 #ifndef STDLIB_H
 #include "pico/stdlib.h"
@@ -60,40 +59,50 @@ static int ticksL = 10;
 bool led = true;
 // -- Pins --
 // -- Sensor GPIO & SHUT --
-uint8_t Sensor1_Shutdown = S1_SH;
-uint8_t Sensor1_GPIO = S1_INT;
-uint8_t Sensor1_address = S1_ADD;
-uint8_t Sensor2_Shutdown = S2_SH;
-uint8_t Sensor2_GPIO = S2_INT;
-uint8_t Sensor2_address = S2_ADD;
-uint8_t Sensor3_Shutdown = S3_SH;
-uint8_t Sensor3_GPIO = S3_INT;
-uint8_t Sensor3_address = S3_ADD;
+static uint8_t Sensor1_Shutdown = S1_SH;
+static uint8_t Sensor1_GPIO = S1_INT;
+static uint8_t Sensor1_address = S1_ADD;
+static uint8_t Sensor2_Shutdown = S2_SH;
+static uint8_t Sensor2_GPIO = S2_INT;
+static uint8_t Sensor2_address = S2_ADD;
+static uint8_t Sensor3_Shutdown = S3_SH;
+static uint8_t Sensor3_GPIO = S3_INT;
+static uint8_t Sensor3_address = S3_ADD;
 // -- Right Motor --
-uint8_t Right_F = R_F;
-uint8_t Right_R = R_R;
+static uint8_t Right_F = R_F;
+static uint8_t Right_R = R_R;
 // -- Left Motor --
-uint8_t Left_F = L_F;
-uint8_t Left_R = L_R;
+static uint8_t Left_F = L_F;
+static uint8_t Left_R = L_R;
 // -- Encoder --
-uint8_t Encode_L = ENC_L;
-uint8_t Encode_R = ENC_R;
-// -- Mouse Class --
-mouse Speedy;
+static uint8_t Encode_L = ENC_L;
+static uint8_t Encode_R = ENC_R;
 // -- VL53L1X --
 // -- Left = 1 , Front = 2, Right = 3 --
-VL53L1X_Status_t status1;
-VL53L1X_Result_t results1; // this is a structure with a lot of data
-uint16_t dist1 = 0;
-VL53L1X_Status_t status2;
-VL53L1X_Result_t results2; // this is a structure with a lot of data
-uint16_t dist2 = 0;
-VL53L1X_Status_t status3;
-VL53L1X_Result_t results3; // this is a structure with a lot of data
-uint16_t dist3 = 0;
+static VL53L1X_Status_t status1;
+static VL53L1X_Result_t results1; // this is a structure with a lot of data
+static uint16_t dist1 = 0;
+static VL53L1X_Status_t status2;
+static VL53L1X_Result_t results2; // this is a structure with a lot of data
+static uint16_t dist2 = 0;
+static VL53L1X_Status_t status3;
+static VL53L1X_Result_t results3; // this is a structure with a lot of data
+static uint16_t dist3 = 0;
+// -- Display --
+static SSD1306 display = SSD1306(i2c0, 0x3C, Size::W128xH32);
+// -- Mouse Characteristics --
+static float R_gE = 1;
+static float R_gD = 1;
+static bool R_dir = true;
+static float L_gE = 1;
+static float L_gD = 1;
+static bool L_dir = true;
+static int R_slice = pwm_gpio_to_slice_num(R_F);
+static int L_slice = pwm_gpio_to_slice_num(L_F);
+static float MouseSpeed = 0;
 // -- Convenient Model Variables
-int sensorWidth = 60; // distance between left and right sensors (mm)
-float maxError = 45;  // mm from center of posts before hard turns
+static int sensorWidth = 60; // distance between left and right sensors (mm)
+static float maxError = 45;  // mm from center of posts before hard turns
 // END Globally reference variables
 
 void setupSensor(uint16_t newAddress, SSD1306 display)
@@ -151,8 +160,92 @@ void updateEncoderL(uint pin, uint32_t event)
     led = !led;
 }
 
+
+
+void move(float speedL, float speedR)
+{
+    uint16_t L_level = std::floor((L_gE * L_gD * abs(speedL) / float(100)) * float(65535));
+    uint16_t R_level = std::floor((R_gE * R_gD * abs(speedR) / float(100)) * float(65535));
+    L_dir = speedL >= 0;
+    R_dir = speedR >= 0;
+    pwm_set_both_levels(L_slice, L_dir * (L_level), !L_dir * (L_level));
+    pwm_set_both_levels(R_slice, R_dir * (R_level), !R_dir * (R_level));
+    pwm_set_enabled(L_slice, true);
+    pwm_set_enabled(R_slice, true);
+}
+
+void move(float speed)
+{
+    MouseSpeed = speed;
+    uint16_t L_level = std::floor((L_gE * L_gD * speed / 100) * float(65535));
+    uint16_t R_level = std::floor((R_gE * R_gD * speed / 100) * float(65535));
+    L_dir = L_level >= 0;
+    R_dir = R_level >= 0;
+    pwm_set_both_levels(L_slice, L_dir * (L_level), !L_dir * (L_level));
+    pwm_set_both_levels(R_slice, R_dir * (R_level), !R_dir * (R_level));
+    pwm_set_enabled(L_slice, true);
+    pwm_set_enabled(R_slice, true);
+}
+
+void stop()
+{
+    move(0);
+}
+
+void pwmInit()
+{
+    // Enable PWM - Left
+    // https://www.i-programmer.info/programming/hardware/14849-the-pico-in-c-basic-pwm.html?start=1
+    // https://www.etechnophiles.com/raspberry-pi-pico-pinout-specifications-datasheet-in-detail/
+    gpio_set_function(L_F, GPIO_FUNC_PWM);
+    uint8_t Left_slice = pwm_gpio_to_slice_num(L_F);
+    uint8_t Left_F_channel = pwm_gpio_to_channel(L_F);
+    gpio_set_function(L_R, GPIO_FUNC_PWM);
+    uint8_t Left_R_channel = pwm_gpio_to_channel(L_R);
+    // Set the levels
+    // pwm_set_both_levels(Right_slice, 65465/2, 65465/2);
+    pwm_set_both_levels(Left_slice, 0, 0);
+    // pwm_set_chan_level(slice, channel, level out of 2^16)
+    pwm_set_clkdiv_int_frac(Left_slice, 2, 8); //~1kHz
+    pwm_set_wrap(Left_slice, 65465);
+    // pwm_set_enabled(Right_slice, true);
+
+    // Enable PWM - Right
+    // https://www.i-programmer.info/programming/hardware/14849-the-pico-in-c-basic-pwm.html?start=1
+    // https://www.etechnophiles.com/raspberry-pi-pico-pinout-specifications-datasheet-in-detail/
+    gpio_set_function(R_F, GPIO_FUNC_PWM);
+    uint8_t Right_slice = pwm_gpio_to_slice_num(R_F);
+    uint8_t Right_F_channel = pwm_gpio_to_channel(R_F);
+    gpio_set_function(R_R, GPIO_FUNC_PWM);
+    uint8_t Right_R_channel = pwm_gpio_to_channel(R_R);
+    // Set the levels
+    // pwm_set_both_levels(Right_slice, 65465/2, 65465/2);
+    pwm_set_both_levels(Right_slice, 0, 0);
+    // pwm_set_chan_level(slice, channel, level out of 2^16)
+    pwm_set_clkdiv_int_frac(Right_slice, 30, 8); //~1kHz
+    pwm_set_wrap(Right_slice, 65465);
+}
+
+void rampUp()
+{
+    for (int i = 0; i <= 10; i++)
+    {
+        move(10 * i);
+        sleep_ms(1.5 * i * 10);
+    }
+}
+
+void rampDown()
+{
+    for (int i = 10; i >= 0; i--)
+    {
+        move(10 * i);
+        sleep_ms(i * 10);
+    }
+}
+
 // Command to repeatedly call to maintain straight
-void maintainStraight()
+float maintainStraight()
 {
     // Grab the Encoder initial values
     // always try and match to the right wheel.
@@ -180,26 +273,27 @@ void maintainStraight()
     {
         tempG = 1;
     }
+
     // assign the proportinal speed to the wheel
     if (errorDistance > 0)
     {
-        Speedy.R_gD = tempG;
+        R_gD = tempG;
         // run the motor at this speed for a short amount of time
-        Speedy.move(Speedy.MouseSpeed);
+        move(MouseSpeed);
         // wait a short amount of time
         sleep_ms(abs(errorDistance));
         // reset the effect of distance sensors
-        Speedy.R_gD = 1;
+        R_gD = 1;
     }
     else if (errorDistance < 0)
     {
-        Speedy.L_gD = tempG;
+        L_gD = tempG;
         // run the motor at this speed for a short amount of time
-        Speedy.move(Speedy.MouseSpeed);
+        move(MouseSpeed);
         // wait a short amount of time
         sleep_ms(abs(errorDistance));
         // reset the effect of distance sensors
-        Speedy.L_gD = 1;
+        L_gD = 1;
     }
 
     int newTicksL = ticksL;
@@ -216,24 +310,24 @@ void maintainStraight()
     if (e > 0)
     {
         // if left can speed up
-        if ((Speedy.L_gE + c1) <= 1)
+        if ((L_gE + c1) <= 1)
         {
-            Speedy.L_gE = Speedy.L_gE + c1;
+            L_gE = L_gE + c1;
         }
         else
         {
             /*float rem = 1 - L_g;
             L_g = 1;
             R_g = R_g - rem;*/
-            Speedy.R_gE = Speedy.R_gE - c1;
+            R_gE = R_gE - c1;
         }
     }
     else if (e < 0)
     {
         // if left can speed up
-        if ((Speedy.R_gE + c1) <= 1)
+        if ((R_gE + c1) <= 1)
         {
-            Speedy.R_gE = Speedy.R_gE + c1;
+            R_gE = R_gE + c1;
         }
         else
         {
@@ -241,9 +335,11 @@ void maintainStraight()
             float rem = 1 - R_g;
             R_g = 1;
             L_g = L_g - rem;*/
-            Speedy.L_gE = Speedy.L_gE - c1;
+            L_gE = L_gE - c1;
         }
     }
+
+    return tempG;
 }
 
 int main()
@@ -274,10 +370,10 @@ int main()
     // https://www.i-programmer.info/programming/hardware/14849-the-pico-in-c-basic-pwm.html?start=1
     // https://www.etechnophiles.com/raspberry-pi-pico-pinout-specifications-datasheet-in-detail/
     gpio_set_function(Left_F, GPIO_FUNC_PWM);
-    uint8_t Left_slice = pwm_gpio_to_slice_num(Left_F);
-    uint8_t Left_F_channel = pwm_gpio_to_channel(Left_F);
+    static uint8_t Left_slice = pwm_gpio_to_slice_num(Left_F);
+    static uint8_t Left_F_channel = pwm_gpio_to_channel(Left_F);
     gpio_set_function(Left_R, GPIO_FUNC_PWM);
-    uint8_t Left_R_channel = pwm_gpio_to_channel(Left_R);
+    static uint8_t Left_R_channel = pwm_gpio_to_channel(Left_R);
     // Set the levels
     // pwm_set_both_levels(Right_slice, 65465/2, 65465/2);
     pwm_set_both_levels(Left_slice, 0, 0);
@@ -290,10 +386,10 @@ int main()
     // https://www.i-programmer.info/programming/hardware/14849-the-pico-in-c-basic-pwm.html?start=1
     // https://www.etechnophiles.com/raspberry-pi-pico-pinout-specifications-datasheet-in-detail/
     gpio_set_function(Right_F, GPIO_FUNC_PWM);
-    uint8_t Right_slice = pwm_gpio_to_slice_num(Right_F);
-    uint8_t Right_F_channel = pwm_gpio_to_channel(Right_F);
+    static uint8_t Right_slice = pwm_gpio_to_slice_num(Right_F);
+    static uint8_t Right_F_channel = pwm_gpio_to_channel(Right_F);
     gpio_set_function(Right_R, GPIO_FUNC_PWM);
-    uint8_t Right_R_channel = pwm_gpio_to_channel(Right_R);
+    static uint8_t Right_R_channel = pwm_gpio_to_channel(Right_R);
     // Set the levels
     // pwm_set_both_levels(Right_slice, 65465/2, 65465/2);
     pwm_set_both_levels(Right_slice, 0, 0);
@@ -320,7 +416,7 @@ int main()
     sleep_ms(250); // delay for display to boot up
 
     // Create a new display object at address 0x3C and size of 128x64
-    SSD1306 display = SSD1306(i2c0, 0x3C, Size::W128xH32);
+
     sleep_ms(500);
 
     // Here we rotate the display by 180 degrees, so that it's not upside down from my perspective
@@ -359,9 +455,9 @@ int main()
     display.clear();
     display.sendBuffer();
 
-    uint8_t dataReady1;
-    uint8_t dataReady2;
-    uint8_t dataReady3;
+    static uint8_t dataReady1;
+    static uint8_t dataReady2;
+    static uint8_t dataReady3;
 
     // Enable interrupts
     gpio_init(Encode_L);
@@ -382,17 +478,32 @@ int main()
     gpio_set_irq_enabled(Encode_R, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 
     bool moving = false;
-    Speedy.rampUp();
-    while (1)
+    // Speedy.rampUp();
+    // Speedy.move(100);
+    float V1 = 0;
+    int i = 0;
+    while (i < 10)
     {
-        Speedy.move(100);
-        int a = Speedy.moveStraight(100, ticksL, ticksR);
+        display.clear();
+        display.sendBuffer();
+        // V1 = maintainStraight();
+        drawText(&display, font_8x8, "G:", 0, 0);
+        // drawText(&display, font_8x8, ((std::to_string(V1*1000))).data(), 0, 9);
+        display.sendBuffer();
+        sleep_ms(1000);
+
         // drawText(&display, font_8x8, (std::to_string(a*1000)).data(), 0, 0);
         // display.sendBuffer();
         // sleep_ms(1000);
         // display.clear();
         // display.sendBuffer();
         // sleep_ms(1000);
+        i = i++;
+    }
+    // Speedy.stop();
+    while (1)
+    {
+        sleep_ms(100);
     }
 
     // Test encoders
@@ -438,12 +549,12 @@ int main()
         else if ((dist2 > 80) && (moving))
         {
             // try to maintain straight
-            Speedy.straighten(100, dist1, dist2);
+            //straighten(100, dist1, dist2);
         }
         else
         {
             // stop
-            Speedy.stop();
+            stop();
             drawText(&display, font_12x16, "Stopping!", 0, 0);
             display.sendBuffer();
             sleep_ms(3000);
@@ -492,20 +603,20 @@ int main()
     while (1)
     {
         // move forward on right for 1 second
-        Speedy.move(0, 100);
+        move(0, 100);
         sleep_ms(1000);
-        Speedy.move(0, -100);
+        move(0, -100);
         sleep_ms(1000);
         // pause
-        Speedy.move(0);
+        move(0);
         sleep_ms(500);
         // move forward on left for 1/2 second
-        Speedy.move(100, 0);
+        move(100, 0);
         sleep_ms(500);
-        Speedy.move(-100, 0);
+        move(-100, 0);
         sleep_ms(500);
         // pause
-        Speedy.move(0);
+        move(0);
         sleep_ms(500);
     }
 
