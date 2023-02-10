@@ -53,6 +53,49 @@ drawText(&display, font_5x8, "Screen Test", 0, 0);
         display.sendBuffer();
 }*/
 
+// Globally referenced variables
+// -- Interrupts --
+static int ticksR = 10;
+static int ticksL = 10;
+bool led = true;
+// -- Pins --
+// -- Sensor GPIO & SHUT --
+uint8_t Sensor1_Shutdown = S1_SH;
+uint8_t Sensor1_GPIO = S1_INT;
+uint8_t Sensor1_address = S1_ADD;
+uint8_t Sensor2_Shutdown = S2_SH;
+uint8_t Sensor2_GPIO = S2_INT;
+uint8_t Sensor2_address = S2_ADD;
+uint8_t Sensor3_Shutdown = S3_SH;
+uint8_t Sensor3_GPIO = S3_INT;
+uint8_t Sensor3_address = S3_ADD;
+// -- Right Motor --
+uint8_t Right_F = R_F;
+uint8_t Right_R = R_R;
+// -- Left Motor --
+uint8_t Left_F = L_F;
+uint8_t Left_R = L_R;
+// -- Encoder --
+uint8_t Encode_L = ENC_L;
+uint8_t Encode_R = ENC_R;
+// -- Mouse Class --
+mouse Speedy;
+// -- VL53L1X --
+// -- Left = 1 , Front = 2, Right = 3 --
+VL53L1X_Status_t status1;
+VL53L1X_Result_t results1; // this is a structure with a lot of data
+uint16_t dist1 = 0;
+VL53L1X_Status_t status2;
+VL53L1X_Result_t results2; // this is a structure with a lot of data
+uint16_t dist2 = 0;
+VL53L1X_Status_t status3;
+VL53L1X_Result_t results3; // this is a structure with a lot of data
+uint16_t dist3 = 0;
+// -- Convenient Model Variables
+int sensorWidth = 60; // distance between left and right sensors (mm)
+float maxError = 45;  // mm from center of posts before hard turns
+// END Globally reference variables
+
 void setupSensor(uint16_t newAddress, SSD1306 display)
 {
     // Initialize Pico's I2C and check for good address
@@ -90,9 +133,6 @@ void setupSensor(uint16_t newAddress, SSD1306 display)
 }
 
 // Interrupt functions & setup
-static int ticksR = 10;
-static int ticksL = 10;
-bool led = true;
 
 void updateEncoderR(void)
 {
@@ -111,29 +151,103 @@ void updateEncoderL(uint pin, uint32_t event)
     led = !led;
 }
 
+// Command to repeatedly call to maintain straight
+void maintainStraight()
+{
+    // Grab the Encoder initial values
+    // always try and match to the right wheel.
+    int prevTicksL = ticksL;
+    int prevTicksR = ticksR;
+    // create a time delay by gathering sensor values
+    // sleep_ms(10);
+    VL53L1X_GetDistance(Sensor1_address, &dist1);
+    VL53L1X_GetDistance(Sensor2_address, &dist2);
+    VL53L1X_GetDistance(Sensor3_address, &dist3);
+    // sleep_ms(10);
+    VL53L1X_ClearInterrupt(Sensor1_address);
+    VL53L1X_ClearInterrupt(Sensor2_address);
+    VL53L1X_ClearInterrupt(Sensor3_address);
+    // Calculate the error (R-L)
+    // Negative = too far right, Positive = too far left
+    // error points towards middle on a numberline centered on current position
+    float errorDistance = dist3 - dist1;
+    float tempG = 1.05 - 0.00046287 * pow(abs(errorDistance), (2.0623));
+    if (tempG < 0)
+    {
+        tempG = 0;
+    }
+    if (tempG > 1)
+    {
+        tempG = 1;
+    }
+    // assign the proportinal speed to the wheel
+    if (errorDistance > 0)
+    {
+        Speedy.R_gD = tempG;
+        // run the motor at this speed for a short amount of time
+        Speedy.move(Speedy.MouseSpeed);
+        // wait a short amount of time
+        sleep_ms(abs(errorDistance));
+        // reset the effect of distance sensors
+        Speedy.R_gD = 1;
+    }
+    else if (errorDistance < 0)
+    {
+        Speedy.L_gD = tempG;
+        // run the motor at this speed for a short amount of time
+        Speedy.move(Speedy.MouseSpeed);
+        // wait a short amount of time
+        sleep_ms(abs(errorDistance));
+        // reset the effect of distance sensors
+        Speedy.L_gD = 1;
+    }
+
+    int newTicksL = ticksL;
+    int newTicksR = ticksR;
+    int dR = newTicksR - ticksR;
+    int dL = newTicksL - ticksL;
+    float e = dR - dL;
+    float c1 = .05;
+
+    // Create a threshold that the encoders will not try and tweak the matching but rather increase up to
+    // the top of the available speed. Do this by keeping the same delta between them but shift both up till one
+    // is at the max value of 1
+
+    if (e > 0)
+    {
+        // if left can speed up
+        if ((Speedy.L_gE + c1) <= 1)
+        {
+            Speedy.L_gE = Speedy.L_gE + c1;
+        }
+        else
+        {
+            /*float rem = 1 - L_g;
+            L_g = 1;
+            R_g = R_g - rem;*/
+            Speedy.R_gE = Speedy.R_gE - c1;
+        }
+    }
+    else if (e < 0)
+    {
+        // if left can speed up
+        if ((Speedy.R_gE + c1) <= 1)
+        {
+            Speedy.R_gE = Speedy.R_gE + c1;
+        }
+        else
+        {
+            /*
+            float rem = 1 - R_g;
+            R_g = 1;
+            L_g = L_g - rem;*/
+            Speedy.L_gE = Speedy.L_gE - c1;
+        }
+    }
+}
+
 int main()
 {
-    // Pin & Variable Declarations
-
-    uint8_t Sensor1_Shutdown = S1_SH;
-    uint8_t Sensor1_GPIO = S1_INT;
-    uint8_t Sensor1_address = S1_ADD;
-    uint8_t Sensor2_Shutdown = S2_SH;
-    uint8_t Sensor2_GPIO = S2_INT;
-    uint8_t Sensor2_address = S2_ADD;
-    uint8_t Sensor3_Shutdown = S3_SH;
-    uint8_t Sensor3_GPIO = S3_INT;
-    uint8_t Sensor3_address = S3_ADD;
-
-    uint8_t Right_F = R_F;
-    uint8_t Right_R = R_R;
-
-    uint8_t Left_F = L_F;
-    uint8_t Left_R = L_R;
-
-    uint8_t Encode_L = ENC_L;
-    uint8_t Encode_R = ENC_R;
-
     // GPIO Setup
     gpio_init(Sensor1_GPIO);
     gpio_set_dir(Sensor1_GPIO, GPIO_IN);
@@ -194,7 +308,6 @@ int main()
     pwm_set_both_levels(Right_slice, dir * (65465 / 2), !dir * (65465 / 2));
     // pwm_set_enabled(Right_slice, true);
 
-    mouse Speedy;
     /* */
 
     // Init i2c0 controller
@@ -216,14 +329,6 @@ int main()
     display.clear();
     display.sendBuffer();
     sleep_ms(200);
-
-    // Sensor Reading here
-    VL53L1X_Status_t status1;
-    VL53L1X_Result_t results1; // this is a structure with a lot of data
-    VL53L1X_Status_t status2;
-    VL53L1X_Result_t results2; // this is a structure with a lot of data
-    VL53L1X_Status_t status3;
-    VL53L1X_Result_t results3; // this is a structure with a lot of data
 
     //  ------  Init Sensor 1 ------
     gpio_put(Sensor1_Shutdown, 1);
@@ -254,10 +359,6 @@ int main()
     display.clear();
     display.sendBuffer();
 
-    uint16_t dist1 = 0;
-    uint16_t dist2 = 0;
-    uint16_t dist3 = 0;
-
     uint8_t dataReady1;
     uint8_t dataReady2;
     uint8_t dataReady3;
@@ -282,23 +383,17 @@ int main()
 
     bool moving = false;
     Speedy.rampUp();
-    while(1){
+    while (1)
+    {
         Speedy.move(100);
         int a = Speedy.moveStraight(100, ticksL, ticksR);
-        //drawText(&display, font_8x8, (std::to_string(a*1000)).data(), 0, 0);
-        //display.sendBuffer();
-        //sleep_ms(1000);
-        //display.clear();
-        //display.sendBuffer();
-        //sleep_ms(1000);
-
+        // drawText(&display, font_8x8, (std::to_string(a*1000)).data(), 0, 0);
+        // display.sendBuffer();
+        // sleep_ms(1000);
+        // display.clear();
+        // display.sendBuffer();
+        // sleep_ms(1000);
     }
-
-
-
-
-
-
 
     // Test encoders
     while (1)

@@ -20,6 +20,7 @@ mouse::mouse()
     this->L_dir = true;
     this->R_slice = pwm_gpio_to_slice_num(R_F);
     this->L_slice = pwm_gpio_to_slice_num(L_F);
+    this->MouseSpeed = 0;
 }
 
 void mouse::move(float speedL, float speedR)
@@ -36,6 +37,7 @@ void mouse::move(float speedL, float speedR)
 
 void mouse::move(float speed)
 {
+    this->MouseSpeed = speed;
     uint16_t L_level = std::floor((L_gE*L_gD * speed / 100) * float(65535));
     uint16_t R_level = std::floor((R_gE*R_gD * speed / 100) * float(65535));
     L_dir = L_level >= 0;
@@ -184,6 +186,61 @@ void mouse::straighten(float speed, uint16_t left, uint16_t right)
 
 int mouse::moveStraight(float inputSpeed, int &inticksL, int &inticksR)
 {
+    // always try and match to the right wheel.
+    int prevTicksL = inticksL;
+    int prevTicksR = inticksR;
+    // wait
+    sleep_ms(10);
+    int newTicksL = inticksL;
+    int newTicksR = inticksR;
+    int dR = newTicksR - prevTicksR;
+    int dL = newTicksL - prevTicksL;
+    float e = dR - dL;
+    float c1 = .05;
+
+    // Create a threshold that the encoders will not try and tweak the matching but rather increase up to 
+    // the top of the available speed. Do this by keeping the same delta between them but shift both up till one 
+    // is at the max value of 1
+    
+    if (e > 0)
+    {
+        // if left can speed up
+        if ((L_gE + c1) <= 1)
+        {
+            L_gE = L_gE + c1;
+        }
+        else
+        {
+            /*float rem = 1 - L_g;
+            L_g = 1;
+            R_g = R_g - rem;*/
+            R_gE = R_gE - c1;
+
+        }
+    }
+    else if (e < 0)
+    {
+        // if left can speed up
+        if ((R_gE + c1) <= 1)
+        {
+            R_gE = R_gE + c1;
+        }
+        else
+        {
+            /*
+            float rem = 1 - R_g;
+            R_g = 1;
+            L_g = L_g - rem;*/
+             L_gE = L_gE - c1;
+        }
+    }
+
+    return c1;
+}
+
+int mouse::moveStraight2(float inputSpeed, int &inticksL, int &inticksR)
+{
+    // Grab the Encoder initial values
     // always try and match to the right wheel.
     int prevTicksL = inticksL;
     int prevTicksR = inticksR;

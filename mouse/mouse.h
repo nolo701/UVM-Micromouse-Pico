@@ -16,9 +16,11 @@ public:
     float R_gE;
     float R_gD;
     bool R_dir = true;
+    
     float L_gE;
     float L_gD;
     bool L_dir = true;
+
     // pwm info
     int R_slice;
     int L_slice;
@@ -34,6 +36,7 @@ public:
     void pwmInit();
     void straighten(float speed, uint16_t left, uint16_t right);
     int moveStraight(float speed, int &inticksL, int &inticksR);
+    int moveStraight2(float speed, int &inticksL, int &inticksR);
     void rampUp();
     void rampDown();
     //turnLeft();
