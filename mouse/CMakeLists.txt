@@ -1,5 +1,5 @@
 add_library(mouse
-        mouse.cpp
+        define.h
         )
 
 target_link_libraries(mouse

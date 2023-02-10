@@ -88,8 +88,6 @@ static uint16_t dist2 = 0;
 static VL53L1X_Status_t status3;
 static VL53L1X_Result_t results3; // this is a structure with a lot of data
 static uint16_t dist3 = 0;
-// -- Display --
-static SSD1306 display = SSD1306(i2c0, 0x3C, Size::W128xH32);
 // -- Mouse Characteristics --
 static float R_gE = 1;
 static float R_gD = 1;
@@ -159,8 +157,6 @@ void updateEncoderL(uint pin, uint32_t event)
     gpio_put(25, led);
     led = !led;
 }
-
-
 
 void move(float speedL, float speedR)
 {
@@ -264,7 +260,8 @@ float maintainStraight()
     // Negative = too far right, Positive = too far left
     // error points towards middle on a numberline centered on current position
     float errorDistance = dist3 - dist1;
-    float tempG = 1.05 - 0.00046287 * pow(abs(errorDistance), (2.0623));
+    //float tempG = 1.05 - 0.00046287 * pow(abs(errorDistance), (2.0623));
+    float tempG = 1.05-pow(2,(.125*errorDistance-5.5));
     if (tempG < 0)
     {
         tempG = 0;
@@ -416,7 +413,8 @@ int main()
     sleep_ms(250); // delay for display to boot up
 
     // Create a new display object at address 0x3C and size of 128x64
-
+    // -- Display --
+    static SSD1306 display = SSD1306(i2c0, 0x3C, Size::W128xH32);
     sleep_ms(500);
 
     // Here we rotate the display by 180 degrees, so that it's not upside down from my perspective
@@ -478,19 +476,21 @@ int main()
     gpio_set_irq_enabled(Encode_R, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 
     bool moving = false;
-    // Speedy.rampUp();
-    // Speedy.move(100);
+    //stop();
+    rampUp();
+    move(100);
     float V1 = 0;
     int i = 0;
-    while (i < 10)
+    while (1)
     {
-        display.clear();
-        display.sendBuffer();
-        // V1 = maintainStraight();
-        drawText(&display, font_8x8, "G:", 0, 0);
-        // drawText(&display, font_8x8, ((std::to_string(V1*1000))).data(), 0, 9);
-        display.sendBuffer();
-        sleep_ms(1000);
+        //display.clear();
+        //display.sendBuffer();
+        V1 = maintainStraight();
+        //drawText(&display, font_8x8, "G:", 0, 0);
+        //drawText(&display, font_8x8, ((std::to_string(V1*1000))).data(), 0, 9);
+        //display.sendBuffer();
+
+        //sleep_ms(100);
 
         // drawText(&display, font_8x8, (std::to_string(a*1000)).data(), 0, 0);
         // display.sendBuffer();
@@ -498,11 +498,11 @@ int main()
         // display.clear();
         // display.sendBuffer();
         // sleep_ms(1000);
-        i = i++;
     }
     // Speedy.stop();
     while (1)
     {
+        stop();
         sleep_ms(100);
     }
 
@@ -549,7 +549,7 @@ int main()
         else if ((dist2 > 80) && (moving))
         {
             // try to maintain straight
-            //straighten(100, dist1, dist2);
+            // straighten(100, dist1, dist2);
         }
         else
         {

@@ -20,7 +20,7 @@ target_link_libraries(PicoMouse
     hardware_pwm 
     pico_ssd1306
     VL53L1X
-    mouse
+    
     )
 
 #target_link_libraries(sensorSetup pico_stdlib hardware_i2c pico_ssd1306)
