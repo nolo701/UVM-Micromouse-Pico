@@ -1,18 +1,28 @@
 
 // Left
-#define S1_SH 8
-#define S1_INT 9
+#define S1_SH 5
+#define S1_INT 4
 #define S1_ADD 0x30
 
 //Forward
-#define S2_SH 0
-#define S2_INT 1
+#define S2_SH 8
+#define S2_INT 9
 #define S2_ADD 0x31
 
 //Right
 #define S3_SH 4
 #define S3_INT 5
 #define S3_ADD 0x32
+
+//Right
+#define S4_SH 15
+#define S4_INT 14
+#define S4_ADD 0x33
+
+//Right
+#define S5_SH 17
+#define S5_INT 16
+#define S5_ADD 0x34
 
 #define R_F 3
 #define R_R 2

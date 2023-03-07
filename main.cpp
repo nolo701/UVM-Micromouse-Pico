@@ -98,6 +98,13 @@ static bool L_dir = true;
 static int R_slice = pwm_gpio_to_slice_num(R_F);
 static int L_slice = pwm_gpio_to_slice_num(L_F);
 static float MouseSpeed = 0;
+bool moving = false;
+bool LEDon = false;
+
+static int calR = 0;
+static int calL = 0;
+static int mouseW = 58;
+static int W = 170;
 // -- Convenient Model Variables
 static int sensorWidth = 60; // distance between left and right sensors (mm)
 static float maxError = 45;  // mm from center of posts before hard turns
@@ -122,7 +129,7 @@ void setupSensor(uint16_t newAddress, SSD1306 display)
     } while (sensorState == 0);
     drawText(&display, font_5x8, "Booted", 0, 0);
     display.sendBuffer();
-    sleep_ms(500);
+    sleep_ms(100);
     display.clear();
     display.sendBuffer();
 
@@ -134,7 +141,7 @@ void setupSensor(uint16_t newAddress, SSD1306 display)
     VL53L1X_SetI2CAddress(SensorDefaultAddress, newAddress);
     drawText(&display, font_5x8, "Finished", 0, 0);
     display.sendBuffer();
-    sleep_ms(500);
+    sleep_ms(100);
     display.clear();
     display.sendBuffer();
 }
@@ -173,6 +180,7 @@ void move(float speedL, float speedR)
 void move(float speed)
 {
     MouseSpeed = speed;
+    moving = true;
     uint16_t L_level = std::floor((L_gE * L_gD * speed / 100) * float(65535));
     uint16_t R_level = std::floor((R_gE * R_gD * speed / 100) * float(65535));
     L_dir = L_level >= 0;
@@ -240,6 +248,44 @@ void rampDown()
     }
 }
 
+void conditionRight()
+{
+    dist3 = dist3 + calR;
+}
+
+void conditionLeft()
+{
+    dist1 = dist1 + calL;
+}
+
+float calculateHeading(float inFilteredL, float inFilteredR)
+{
+    // Absolute error <= 6.7e-5 float acos(float x)
+    float x = ((W - 5) / float((inFilteredL + inFilteredR + sensorWidth)));
+    float negate = float(x < 0);
+    x = abs(x);
+    float ret = -0.0187293;
+    ret = ret * x;
+    ret = ret + 0.0742610;
+    ret = ret * x;
+    ret = ret - 0.2121144;
+    ret = ret * x;
+    ret = ret + 1.5707288;
+    ret = ret * sqrt(1.0 - x);
+    ret = ret - 2 * negate * ret;
+    return negate * 3.14159265358979 + ret;
+
+    float angleDeg = (float(acosf((W - 5) / float((inFilteredL + inFilteredR + sensorWidth)))) * (180.0 / 3.14159));
+    if (inFilteredL > inFilteredR)
+    {
+        return -1.0 * angleDeg;
+    }
+    else
+    {
+        return angleDeg;
+    }
+}
+
 // Command to repeatedly call to maintain straight
 float maintainStraight()
 {
@@ -250,18 +296,29 @@ float maintainStraight()
     // create a time delay by gathering sensor values
     // sleep_ms(10);
     VL53L1X_GetDistance(Sensor1_address, &dist1);
+    conditionLeft();
     VL53L1X_GetDistance(Sensor2_address, &dist2);
     VL53L1X_GetDistance(Sensor3_address, &dist3);
+    conditionRight();
     // sleep_ms(10);
     VL53L1X_ClearInterrupt(Sensor1_address);
     VL53L1X_ClearInterrupt(Sensor2_address);
     VL53L1X_ClearInterrupt(Sensor3_address);
+    // PID Terms
+    // float KP = 0;
+    // float KI = 0;
     // Calculate the error (R-L)
     // Negative = too far right, Positive = too far left
     // error points towards middle on a numberline centered on current position
     float errorDistance = dist3 - dist1;
-    //float tempG = 1.05 - 0.00046287 * pow(abs(errorDistance), (2.0623));
-    float tempG = 1.05-pow(2,(.125*errorDistance-5.5));
+    // P Control Term
+    // float PCont = errorDistance * KP;
+    // I Control Term
+    //  float IControl += errorDistance * dT
+    // PI Controller
+    //  controlTerm = PCont + ICont
+    float tempG = 1.05 - 0.00046287 * pow(abs(errorDistance), (2.0623)); // best one
+    // float tempG = 1.1 - pow(1.3, (.05 * abs(errorDistance) - 9));
     if (tempG < 0)
     {
         tempG = 0;
@@ -271,27 +328,28 @@ float maintainStraight()
         tempG = 1;
     }
 
-    // assign the proportinal speed to the wheel
-    if (errorDistance > 0)
-    {
-        R_gD = tempG;
-        // run the motor at this speed for a short amount of time
-        move(MouseSpeed);
-        // wait a short amount of time
-        sleep_ms(abs(errorDistance));
-        // reset the effect of distance sensors
-        R_gD = 1;
-    }
-    else if (errorDistance < 0)
-    {
-        L_gD = tempG;
-        // run the motor at this speed for a short amount of time
-        move(MouseSpeed);
-        // wait a short amount of time
-        sleep_ms(abs(errorDistance));
-        // reset the effect of distance sensors
-        L_gD = 1;
-    }
+    if (abs(errorDistance) > 20)
+        // assign the proportinal speed to the wheel
+        if (errorDistance > 0)
+        {
+            R_gD = tempG;
+            // run the motor at this speed for a short amount of time
+            move(MouseSpeed);
+            // wait a short amount of time
+            sleep_us(abs(errorDistance));
+            // reset the effect of distance sensors
+            R_gD = 1;
+        }
+        else if (errorDistance < 0)
+        {
+            L_gD = tempG;
+            // run the motor at this speed for a short amount of time
+            move(MouseSpeed);
+            // wait a short amount of time
+            sleep_us(abs(errorDistance));
+            // reset the effect of distance sensors
+            L_gD = 1;
+        }
 
     int newTicksL = ticksL;
     int newTicksR = ticksR;
@@ -341,6 +399,9 @@ float maintainStraight()
 
 int main()
 {
+    // GPIO setup the LED
+    gpio_init(25);
+    gpio_set_dir(25, GPIO_OUT);
     // GPIO Setup
     gpio_init(Sensor1_GPIO);
     gpio_set_dir(Sensor1_GPIO, GPIO_IN);
@@ -475,22 +536,175 @@ int main()
     // gpio_set_irq_enabled_with_callback(Encode_R, GPIO_IRQ_EDGE_RISE, true, &updateEncoderR);
     gpio_set_irq_enabled(Encode_R, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 
-    bool moving = false;
-    //stop();
+    // Calibrate sensors
+    while ((calR * calL) == 0)
+    {
+        // Get sensor values
+        VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
+        if (dataReady1 == 1)
+        {
+            VL53L1X_GetDistance(Sensor1_address, &dist1);
+            calL = (180 - mouseW) / 2.0 - dist1;
+        }
+        VL53L1X_CheckForDataReady(Sensor3_address, &dataReady3);
+        if (dataReady3 == 1)
+        {
+            VL53L1X_GetDistance(Sensor3_address, &dist3);
+            calR = (180 - mouseW) / 2.0 - dist3;
+        }
+    }
+
+    float DL = 0;
+    float DR = 0;
+    static float heading = 0;
+    float headingOffset = 0;
+
+    // Measurment loop
+    int sensorFilterLen = 5;
+
+    float sensorLFilter[sensorFilterLen];
+    float sensorLFilterSum = 0;
+    float sensorLFilterAvg = 0;
+
+    float sensorRFilter[sensorFilterLen];
+    float sensorRFilterSum = 0;
+    float sensorRFilterAvg = 0;
+
+    // Init Moving average filters
+    for (int i = 0; i < sensorFilterLen; i++)
+    {
+        sensorLFilter[i] = (W - sensorWidth) / 2.0;
+        sensorRFilter[i] = (W - sensorWidth) / 2.0;
+    }
+    // Init the averages & sums
+    sensorLFilterAvg = (W - sensorWidth) / 2.0;
+    sensorRFilterAvg = (W - sensorWidth) / 2.0;
+    sensorLFilterSum = sensorFilterLen * sensorLFilterAvg;
+    sensorRFilterSum = sensorFilterLen * sensorRFilterAvg;
+    int count = 0;
+
+    while (1)
+    {
+        gpio_put(25, LEDon);
+        LEDon = !LEDon;
+        sleep_ms(50);
+        // Get sensor values
+        VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
+        if (dataReady1 == 1)
+        {
+            VL53L1X_GetDistance(Sensor1_address, &dist1);
+            conditionLeft();
+        }
+        VL53L1X_CheckForDataReady(Sensor3_address, &dataReady3);
+        if (dataReady3 == 1)
+        {
+            VL53L1X_GetDistance(Sensor3_address, &dist3);
+            conditionRight();
+        }
+
+        // Run the moving average
+        // Remove the oldest value
+        sensorLFilterSum = sensorLFilterSum - sensorLFilter[0];
+        sensorRFilterSum = sensorRFilterSum - sensorRFilter[0];
+        // shift the values
+        for (int i = 1; i <= (sensorFilterLen - 1); i++)
+        {
+            sensorLFilter[i - 1] = sensorLFilter[i];
+            sensorRFilter[i - 1] = sensorRFilter[i];
+        }
+        // Put in new value
+        sensorLFilter[sensorFilterLen - 1] = dist1;
+        sensorRFilter[sensorFilterLen - 1] = dist3;
+        // Add it to the sum
+        sensorLFilterSum = sensorLFilterSum + sensorLFilter[sensorFilterLen - 1];
+        sensorRFilterSum = sensorRFilterSum + sensorRFilter[sensorFilterLen - 1];
+        // Calculate new average
+        sensorLFilterAvg = sensorLFilterSum / float(sensorFilterLen);
+        sensorRFilterAvg = sensorRFilterSum / float(sensorFilterLen);
+        count++;
+        if (count > 30)
+        {
+            heading = calculateHeading(sensorLFilterAvg, sensorRFilterAvg);
+            heading = heading * 57.2957795131;
+            drawText(&display, font_12x16, (std::to_string(heading)).data(), 0, 0);
+            display.sendBuffer();
+            sleep_ms(800);
+            display.clear();
+            display.sendBuffer();
+            sleep_ms(200);
+            ;
+            count = 0;
+        }
+    }
+
+    // Print Left
+    /*
+    drawText(&display, font_12x16, (std::to_string(dist1)).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(800);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(200);
+    // Print Right
+    drawText(&display, font_12x16, (std::to_string(dist3)).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(800);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(200);
+    // Print divisor
+    drawText(&display, font_12x16, (std::to_string(float(170) / float((dist1 + dist3 + (mouseW))))).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(800);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(200);
+    */
+    // Print Angle
+
+    // Play with the numbers
+    // if(headingAverage>0){
+
+    //}
+    // fluffedNumber = 8*pow(headingAverage,1);
+    /*
+    drawText(&display, font_12x16, (std::to_string(headingAverage)).data(), 0, 0);
+    // drawText(&display, font_12x16, (std::to_string(acosf((float(170) / float((dist1 + dist3 + (mouseW))))))).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(100);
+    display.clear();
+    display.sendBuffer();*/
+    // sleep_ms(1000);
+
+    // stop();
     rampUp();
     move(100);
     float V1 = 0;
     int i = 0;
     while (1)
     {
-        //display.clear();
-        //display.sendBuffer();
-        V1 = maintainStraight();
-        //drawText(&display, font_8x8, "G:", 0, 0);
-        //drawText(&display, font_8x8, ((std::to_string(V1*1000))).data(), 0, 9);
-        //display.sendBuffer();
 
-        //sleep_ms(100);
+        // display.clear();
+        // display.sendBuffer();
+        V1 = maintainStraight();
+        if (dist2 < 40)
+        {
+            rampDown();
+            while (dist2 < 40)
+            {
+                sleep_ms(50);
+                VL53L1X_CheckForDataReady(Sensor2_address, &dataReady2);
+                if (dataReady2 == 1)
+                {
+                    VL53L1X_GetDistance(Sensor2_address, &dist2);
+                }
+            }
+        }
+        // drawText(&display, font_8x8, "G:", 0, 0);
+        // drawText(&display, font_8x8, ((std::to_string(V1*1000))).data(), 0, 9);
+        // display.sendBuffer();
+
+        // sleep_ms(100);
 
         // drawText(&display, font_8x8, (std::to_string(a*1000)).data(), 0, 0);
         // display.sendBuffer();
@@ -579,6 +793,7 @@ int main()
         if (dataReady1 == 1)
         {
             VL53L1X_GetDistance(Sensor1_address, &dist1);
+            dist1 = dist1 - 6.5;
             drawText(&display, font_5x8, ("1: " + std::to_string(dist1)).data(), 0, 0);
         }
         if (dataReady2 == 1)
@@ -589,6 +804,7 @@ int main()
         if (dataReady3 == 1)
         {
             VL53L1X_GetDistance(Sensor3_address, &dist3);
+            dist3 = dist3 + 16;
             drawText(&display, font_5x8, ("3: " + std::to_string(dist3)).data(), 10, 10);
         }
         display.sendBuffer();
@@ -619,6 +835,38 @@ int main()
         move(0);
         sleep_ms(500);
     }
+
+    /*
+    VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
+        VL53L1X_CheckForDataReady(Sensor2_address, &dataReady2);
+        VL53L1X_CheckForDataReady(Sensor3_address, &dataReady3);
+        sleep_ms(10);
+        // check to see if sensor 1 has a value
+        if (dataReady1 == 1)
+        {
+            VL53L1X_GetDistance(Sensor1_address, &dist1);
+            conditionLeft();
+            drawText(&display, font_5x8, ("1: " + std::to_string(dist1)).data(), 0, 0);
+        }
+        if (dataReady2 == 1)
+        {
+            VL53L1X_GetDistance(Sensor2_address, &dist2);
+            drawText(&display, font_5x8, ("2: " + std::to_string(dist2)).data(), 5, 5);
+        }
+        if (dataReady3 == 1)
+        {
+            VL53L1X_GetDistance(Sensor3_address, &dist3);
+            conditionRight();
+            drawText(&display, font_5x8, ("3: " + std::to_string(dist3)).data(), 10, 10);
+        }
+        display.sendBuffer();
+        display.clear();
+        VL53L1X_ClearInterrupt(Sensor1_address);
+        VL53L1X_ClearInterrupt(Sensor2_address);
+        VL53L1X_ClearInterrupt(Sensor3_address);
+        sleep_ms(500);
+        display.sendBuffer();
+    */
 
     // Measure and print continuously
     bool first_range = true;
