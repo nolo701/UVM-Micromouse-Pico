@@ -24,6 +24,8 @@
 #include <math.h>
 #endif
 
+#include <algorithm>
+
 // includes for OLED Display
 #include "pico-ssd1306/ssd1306.h"
 #include "pico-ssd1306/textRenderer/TextRenderer.h"
@@ -59,15 +61,22 @@ static int ticksL = 10;
 bool led = true;
 // -- Pins --
 // -- Sensor GPIO & SHUT --
-static uint8_t Sensor1_Shutdown = S1_SH;
-static uint8_t Sensor1_GPIO = S1_INT;
-static uint8_t Sensor1_address = S1_ADD;
-static uint8_t Sensor2_Shutdown = S2_SH;
-static uint8_t Sensor2_GPIO = S2_INT;
-static uint8_t Sensor2_address = S2_ADD;
-static uint8_t Sensor3_Shutdown = S3_SH;
-static uint8_t Sensor3_GPIO = S3_INT;
-static uint8_t Sensor3_address = S3_ADD;
+// -- Left = 1 , Left Diagonal = 2, Front = 3, Right Diagonal = 4, Right = 5 --
+static uint8_t SensorL_Shutdown = S1_SH;
+static uint8_t SensorL_GPIO = S1_INT;
+static uint8_t SensorL_address = S1_ADD;
+static uint8_t SensorLD_Shutdown = S2_SH;
+static uint8_t SensorLD_GPIO = S2_INT;
+static uint8_t SensorLD_address = S2_ADD;
+static uint8_t SensorF_Shutdown = S3_SH;
+static uint8_t SensorF_GPIO = S3_INT;
+static uint8_t SensorF_address = S3_ADD;
+static uint8_t SensorRD_Shutdown = S4_SH;
+static uint8_t SensorRD_GPIO = S4_INT;
+static uint8_t SensorRD_address = S4_ADD;
+static uint8_t SensorR_Shutdown = S5_SH;
+static uint8_t SensorR_GPIO = S5_INT;
+static uint8_t SensorR_address = S5_ADD;
 // -- Right Motor --
 static uint8_t Right_F = R_F;
 static uint8_t Right_R = R_R;
@@ -79,16 +88,40 @@ static uint8_t Encode_L = ENC_L;
 static uint8_t Encode_R = ENC_R;
 // -- VL53L1X --
 // -- Left = 1 , Front = 2, Right = 3 --
-static VL53L1X_Status_t status1;
-static VL53L1X_Result_t results1; // this is a structure with a lot of data
-static uint16_t dist1 = 0;
-static VL53L1X_Status_t status2;
-static VL53L1X_Result_t results2; // this is a structure with a lot of data
-static uint16_t dist2 = 0;
-static VL53L1X_Status_t status3;
-static VL53L1X_Result_t results3; // this is a structure with a lot of data
-static uint16_t dist3 = 0;
+static VL53L1X_Status_t statusL;
+static VL53L1X_Result_t resultsL; // this is a structure with a lot of data
+static VL53L1X_Status_t statusLD;
+static VL53L1X_Result_t resultsLD; // this is a structure with a lot of data
+static VL53L1X_Status_t statusF;
+static VL53L1X_Result_t resultsF; // this is a structure with a lot of data
+static VL53L1X_Status_t statusRD;
+static VL53L1X_Result_t resultsRD; // this is a structure with a lot of data
+static VL53L1X_Status_t statusR;
+static VL53L1X_Result_t resultsR; // this is a structure with a lot of data
+
+static uint8_t dataReady = 0;
 // -- Mouse Characteristics --
+// Model Parameters
+static float W = 170;    // Width of Maze [mm]
+static float a = 5;      // This is the distance from the sensor focal point for L & R [mm]
+static float b = 5;      // This is the distance from the sensor focal point for DL & DR [mm]
+static float c = 5;      // This is the distance from the sensor focal point for F [mm]
+static float phi_D = 45; // Angle from 0deg (forwards) of DL & DR
+static float d = 25;     // Distance from sensor focal point to center of rotation [mm]
+static float R = 50;     // Radius of Wheel in [mm]
+static float L = 40;     // Distance between each wheel [mm]
+
+// Values to hold the averages which are to be used as the "clean" distances
+static float distL = 0;
+static float distLD = 0;
+static float distF = 0;
+static float distRD = 0;
+static float distR = 0;
+
+// Frequently used conversions
+static float DEG2RAD = .017453292519943296;
+static float RAD2DEG = 57.2957795130823209;
+// Old stuff
 static float R_gE = 1;
 static float R_gD = 1;
 static bool R_dir = true;
@@ -106,8 +139,7 @@ static int calL = 0;
 static int mouseW = 58;
 static int W = 170;
 // -- Convenient Model Variables
-static int sensorWidth = 60; // distance between left and right sensors (mm)
-static float maxError = 45;  // mm from center of posts before hard turns
+
 // END Globally reference variables
 
 void setupSensor(uint16_t newAddress, SSD1306 display)
@@ -152,8 +184,6 @@ void updateEncoderR(void)
 {
     gpio_acknowledge_irq(ENC_R, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL);
     ticksR++;
-    gpio_put(25, led);
-    led = !led;
 }
 
 void updateEncoderL(uint pin, uint32_t event)
@@ -161,8 +191,6 @@ void updateEncoderL(uint pin, uint32_t event)
     // gpio_acknowledge_irq(ENC_L, GPIO_IRQ_EDGE_RISE);
     ticksL++;
     ticksR--;
-    gpio_put(25, led);
-    led = !led;
 }
 
 void move(float speedL, float speedR)
@@ -194,6 +222,7 @@ void move(float speed)
 void stop()
 {
     move(0);
+    moving = false;
 }
 
 void pwmInit()
@@ -239,6 +268,8 @@ void rampUp()
     }
 }
 
+
+
 void rampDown()
 {
     for (int i = 10; i >= 0; i--)
@@ -248,42 +279,136 @@ void rampDown()
     }
 }
 
-void conditionRight()
+void rampUp2()
 {
-    dist3 = dist3 + calR;
+    for (int i = 0; i <= 30; i++)
+    {
+        //float j = 4 * sqrtf(30*i)
+        float j = .5 * pow(.5*i,2);
+        if(j>100){
+            j=100;
+        }
+        move(j);
+        sleep_ms(25);
+    }
 }
 
-void conditionLeft()
+void rampDown2()
 {
-    dist1 = dist1 + calL;
+    for (int i = 0; i <= 30; i++)
+    {
+        //float j = 4 * sqrtf(30*i)
+        float j = 100 - (.5 * pow(.5*i,2));
+        if(j<100){
+            j=0;
+        }
+        move(j);
+        sleep_ms(25);
+    }
 }
 
-float calculateHeading(float inFilteredL, float inFilteredR)
+// Custom print float statement
+void dispFloat(float inFloat, SSD1306 display, int duration)
 {
-    // Absolute error <= 6.7e-5 float acos(float x)
-    float x = ((W - 5) / float((inFilteredL + inFilteredR + sensorWidth)));
-    float negate = float(x < 0);
-    x = abs(x);
-    float ret = -0.0187293;
-    ret = ret * x;
-    ret = ret + 0.0742610;
-    ret = ret * x;
-    ret = ret - 0.2121144;
-    ret = ret * x;
-    ret = ret + 1.5707288;
-    ret = ret * sqrt(1.0 - x);
-    ret = ret - 2 * negate * ret;
-    return negate * 3.14159265358979 + ret;
+    drawText(&display, font_12x16, (std::to_string(inFloat)).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(duration * 3 / 4);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(duration / 4);
+}
 
-    float angleDeg = (float(acosf((W - 5) / float((inFilteredL + inFilteredR + sensorWidth)))) * (180.0 / 3.14159));
-    if (inFilteredL > inFilteredR)
+// Filters & Data storage
+static const int distFilterLength = 10; // Number of values to create an average to remove noise
+// Values to hold the current sums of filters
+static float distFilterSum = 0;
+// Values to hold the averages which are to be used as the "clean" distances
+static float distAvg = 0;
+
+// Example call: distL = measureSensor(SensorL_address);
+float measureSensor(uint8_t sensorAddr)
+{
+    uint16_t measurement = 0;
+    uint16_t measurementsRecorded = 0;
+
+    while (measurementsRecorded < distFilterLength)
     {
-        return -1.0 * angleDeg;
+
+        VL53L1X_CheckForDataReady(sensorAddr, &dataReady);
+        if (dataReady == 1)
+        {
+
+            VL53L1X_GetDistance(sensorAddr, &measurement);
+            distFilterSum += measurement;
+            measurementsRecorded += 1;
+        }
     }
-    else
+    return float(distFilterSum) / float(distFilterLength);
+}
+
+void updateAllSensors()
+{
+    distL = measureSensor(SensorL_address);
+    distLD = measureSensor(SensorLD_address);
+    distF = measureSensor(SensorL_address);
+    distRD = measureSensor(SensorLD_address);
+    distR = measureSensor(SensorL_address);
+}
+
+float calculateHeading()
+{
+    float rat = W / (distL + distR + 2 * a);
+    float theta_deg = 90 - (asinf(rat)) * RAD2DEG;
+    float out = abs(theta_deg);
+    // Check the diagonal sensors for polarity
+    if (distLD < distRD)
     {
-        return angleDeg;
+        out = -1 * out;
     }
+    // Small angle correct
+    if (abs(out) < 25)
+    {
+        // LHS Triangle
+        float s1 = distL + a;
+        float s2 = distLD + b;
+        // RHS Triangle
+        float s4 = distRD + c;
+        float s5 = distR + a;
+        // Triangle Projection on walls
+        float L_AB = sqrt(pow(s1, 2) + pow(s2, 2) - 2 * s1 * s2 * cosf(phi_D));
+        float L_ED = sqrt(pow(s4, 2) + pow(s5, 2) - 2 * s4 * s5 * cosf(phi_D));
+        // Triangle upper angles
+        float phi_s1 = asinf(s1 * sinf(phi_D * DEG2RAD) / L_AB) * RAD2DEG;
+        float phi_s4 = asinf(s4 * sinf(phi_D * DEG2RAD) / L_ED) * RAD2DEG;
+        // Solve for angles
+        float theta_L = -90 + phi_s1 + phi_D;
+        float theta_R = -90 + phi_s4 + phi_D;
+        // Check for which side is accurate
+        if (abs(theta_R - theta_L) > 4)
+        {
+            out = MIN(theta_L, theta_R);
+        }
+        else
+        {
+            out = (theta_L + theta_R) / 2.0;
+        }
+        out = -1 * out;
+    }
+    out = -1 * out;
+    return out;
+}
+
+float getX()
+{
+    float out = 0;
+    float theta = calculateHeading();
+    // Calculate the distances from the L-DL & R-DR sensors
+    float xp1 = (distL + a) * cosf((180 + theta) * DEG2RAD);
+    float xp2 = (distLD + b) * cosf((phi_D + theta) * DEG2RAD);
+    float xp4 = W - (distRD + b) * cosf((90 - phi_D + theta) * DEG2RAD);
+    float xp5 = W - (distR + a) * cosf((180 + theta) * DEG2RAD);
+    out = (abs(xp1) + abs(xp2) + abs(xp4) + abs(xp5)) / float(4.0);
+    return out;
 }
 
 // Command to repeatedly call to maintain straight
@@ -295,22 +420,20 @@ float maintainStraight()
     int prevTicksR = ticksR;
     // create a time delay by gathering sensor values
     // sleep_ms(10);
-    VL53L1X_GetDistance(Sensor1_address, &dist1);
-    conditionLeft();
-    VL53L1X_GetDistance(Sensor2_address, &dist2);
-    VL53L1X_GetDistance(Sensor3_address, &dist3);
-    conditionRight();
+    VL53L1X_GetDistance(Sensor1_address, &distL);
+    VL53L1X_GetDistance(SensorLD_address, &dist2);
+    VL53L1X_GetDistance(SensorF_address, &dist3);
     // sleep_ms(10);
     VL53L1X_ClearInterrupt(Sensor1_address);
-    VL53L1X_ClearInterrupt(Sensor2_address);
-    VL53L1X_ClearInterrupt(Sensor3_address);
+    VL53L1X_ClearInterrupt(SensorLD_address);
+    VL53L1X_ClearInterrupt(SensorF_address);
     // PID Terms
     // float KP = 0;
     // float KI = 0;
     // Calculate the error (R-L)
     // Negative = too far right, Positive = too far left
     // error points towards middle on a numberline centered on current position
-    float errorDistance = dist3 - dist1;
+    float errorDistance = dist3 - distL;
     // P Control Term
     // float PCont = errorDistance * KP;
     // I Control Term
@@ -403,26 +526,40 @@ int main()
     gpio_init(25);
     gpio_set_dir(25, GPIO_OUT);
     // GPIO Setup
-    gpio_init(Sensor1_GPIO);
-    gpio_set_dir(Sensor1_GPIO, GPIO_IN);
-    gpio_init(Sensor1_Shutdown);
-    gpio_set_dir(Sensor1_Shutdown, GPIO_OUT);
+    gpio_init(SensorL_GPIO);
+    gpio_set_dir(SensorL_GPIO, GPIO_IN);
+    gpio_init(SensorL_Shutdown);
+    gpio_set_dir(SensorL_Shutdown, GPIO_OUT);
     // Shutdown is active low so set it high
-    gpio_put(Sensor1_Shutdown, 1);
+    gpio_put(SensorL_Shutdown, 1);
 
-    gpio_init(Sensor2_GPIO);
-    gpio_set_dir(Sensor2_GPIO, GPIO_IN);
-    gpio_init(Sensor2_Shutdown);
-    gpio_set_dir(Sensor2_Shutdown, GPIO_OUT);
+    gpio_init(SensorLD_GPIO);
+    gpio_set_dir(SensorLD_GPIO, GPIO_IN);
+    gpio_init(SensorLD_Shutdown);
+    gpio_set_dir(SensorLD_Shutdown, GPIO_OUT);
     // Shutdown is active low so set it high
-    gpio_put(Sensor2_Shutdown, 1);
+    gpio_put(SensorLD_Shutdown, 1);
 
-    gpio_init(Sensor3_GPIO);
-    gpio_set_dir(Sensor3_GPIO, GPIO_IN);
-    gpio_init(Sensor3_Shutdown);
-    gpio_set_dir(Sensor3_Shutdown, GPIO_OUT);
+    gpio_init(SensorF_GPIO);
+    gpio_set_dir(SensorF_GPIO, GPIO_IN);
+    gpio_init(SensorF_Shutdown);
+    gpio_set_dir(SensorF_Shutdown, GPIO_OUT);
     // Shutdown is active low so set it high
-    gpio_put(Sensor3_Shutdown, 1);
+    gpio_put(SensorF_Shutdown, 1);
+
+    gpio_init(SensorRD_GPIO);
+    gpio_set_dir(SensorRD_GPIO, GPIO_IN);
+    gpio_init(SensorRD_Shutdown);
+    gpio_set_dir(SensorRD_Shutdown, GPIO_OUT);
+    // Shutdown is active low so set it high
+    gpio_put(SensorRD_Shutdown, 1);
+
+    gpio_init(SensorR_GPIO);
+    gpio_set_dir(SensorR_GPIO, GPIO_IN);
+    gpio_init(SensorR_Shutdown);
+    gpio_set_dir(SensorR_Shutdown, GPIO_OUT);
+    // Shutdown is active low so set it high
+    gpio_put(SensorR_Shutdown, 1);
 
     // Enable PWM - Left
     // https://www.i-programmer.info/programming/hardware/14849-the-pico-in-c-basic-pwm.html?start=1
@@ -485,38 +622,48 @@ int main()
     display.sendBuffer();
     sleep_ms(200);
 
-    //  ------  Init Sensor 1 ------
-    gpio_put(Sensor1_Shutdown, 1);
+    //  ------  Init Sensor L ------
+    gpio_put(SensorL_Shutdown, 1);
     // turn off others
-    gpio_put(Sensor2_Shutdown, 0);
-    gpio_put(Sensor3_Shutdown, 0);
+    gpio_put(SensorLD_Shutdown, 0);
+    gpio_put(SensorF_Shutdown, 0);
+    gpio_put(SensorRD_Shutdown, 0);
+    gpio_put(SensorR_Shutdown, 0);
     sleep_ms(100);
-    setupSensor(Sensor1_address, display);
+    setupSensor(SensorDefaultAddress, display);
 
-    //  ------  Init Sensor 2 ------
-    gpio_put(Sensor2_Shutdown, 1);
+    //  ------  Init Sensor LD ------
+    gpio_put(SensorLD_Shutdown, 1);
     sleep_ms(100);
-    setupSensor(Sensor2_address, display);
+    setupSensor(SensorDefaultAddress, display);
 
-    //  ------  Init Sensor 3 ------
-    gpio_put(Sensor3_Shutdown, 1);
+    //  ------  Init Sensor F ------
+    gpio_put(SensorF_Shutdown, 1);
     sleep_ms(100);
-    setupSensor(Sensor3_address, display);
+    setupSensor(SensorDefaultAddress, display);
+
+    //  ------  Init Sensor RD ------
+    gpio_put(SensorRD_Shutdown, 1);
+    sleep_ms(100);
+    setupSensor(SensorDefaultAddress, display);
+
+    //  ------  Init Sensor R ------
+    gpio_put(SensorR_Shutdown, 1);
+    sleep_ms(100);
+    setupSensor(SensorDefaultAddress, display);
 
     // Enable all three sensors
-    VL53L1X_StartRanging(Sensor1_address);
-    VL53L1X_StartRanging(Sensor2_address);
-    VL53L1X_StartRanging(Sensor3_address);
+    VL53L1X_StartRanging(SensorL_address);
+    VL53L1X_StartRanging(SensorLD_address);
+    VL53L1X_StartRanging(SensorF_address);
+    VL53L1X_StartRanging(SensorRD_address);
+    VL53L1X_StartRanging(SensorR_address);
 
     drawText(&display, font_5x8, "Ranging on", 0, 0);
     display.sendBuffer();
-    sleep_ms(500);
+    sleep_ms(250);
     display.clear();
     display.sendBuffer();
-
-    static uint8_t dataReady1;
-    static uint8_t dataReady2;
-    static uint8_t dataReady3;
 
     // Enable interrupts
     gpio_init(Encode_L);
@@ -536,365 +683,18 @@ int main()
     // gpio_set_irq_enabled_with_callback(Encode_R, GPIO_IRQ_EDGE_RISE, true, &updateEncoderR);
     gpio_set_irq_enabled(Encode_R, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 
-    // Calibrate sensors
-    while ((calR * calL) == 0)
-    {
-        // Get sensor values
-        VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
-        if (dataReady1 == 1)
-        {
-            VL53L1X_GetDistance(Sensor1_address, &dist1);
-            calL = (180 - mouseW) / 2.0 - dist1;
-        }
-        VL53L1X_CheckForDataReady(Sensor3_address, &dataReady3);
-        if (dataReady3 == 1)
-        {
-            VL53L1X_GetDistance(Sensor3_address, &dist3);
-            calR = (180 - mouseW) / 2.0 - dist3;
-        }
-    }
-
-    float DL = 0;
-    float DR = 0;
-    static float heading = 0;
-    float headingOffset = 0;
-
-    // Measurment loop
-    int sensorFilterLen = 5;
-
-    float sensorLFilter[sensorFilterLen];
-    float sensorLFilterSum = 0;
-    float sensorLFilterAvg = 0;
-
-    float sensorRFilter[sensorFilterLen];
-    float sensorRFilterSum = 0;
-    float sensorRFilterAvg = 0;
-
-    // Init Moving average filters
-    for (int i = 0; i < sensorFilterLen; i++)
-    {
-        sensorLFilter[i] = (W - sensorWidth) / 2.0;
-        sensorRFilter[i] = (W - sensorWidth) / 2.0;
-    }
-    // Init the averages & sums
-    sensorLFilterAvg = (W - sensorWidth) / 2.0;
-    sensorRFilterAvg = (W - sensorWidth) / 2.0;
-    sensorLFilterSum = sensorFilterLen * sensorLFilterAvg;
-    sensorRFilterSum = sensorFilterLen * sensorRFilterAvg;
-    int count = 0;
-
+    // Test variables
+    float heading = 0;
     while (1)
     {
         gpio_put(25, LEDon);
         LEDon = !LEDon;
         sleep_ms(50);
-        // Get sensor values
-        VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
-        if (dataReady1 == 1)
-        {
-            VL53L1X_GetDistance(Sensor1_address, &dist1);
-            conditionLeft();
-        }
-        VL53L1X_CheckForDataReady(Sensor3_address, &dataReady3);
-        if (dataReady3 == 1)
-        {
-            VL53L1X_GetDistance(Sensor3_address, &dist3);
-            conditionRight();
-        }
-
-        // Run the moving average
-        // Remove the oldest value
-        sensorLFilterSum = sensorLFilterSum - sensorLFilter[0];
-        sensorRFilterSum = sensorRFilterSum - sensorRFilter[0];
-        // shift the values
-        for (int i = 1; i <= (sensorFilterLen - 1); i++)
-        {
-            sensorLFilter[i - 1] = sensorLFilter[i];
-            sensorRFilter[i - 1] = sensorRFilter[i];
-        }
-        // Put in new value
-        sensorLFilter[sensorFilterLen - 1] = dist1;
-        sensorRFilter[sensorFilterLen - 1] = dist3;
-        // Add it to the sum
-        sensorLFilterSum = sensorLFilterSum + sensorLFilter[sensorFilterLen - 1];
-        sensorRFilterSum = sensorRFilterSum + sensorRFilter[sensorFilterLen - 1];
-        // Calculate new average
-        sensorLFilterAvg = sensorLFilterSum / float(sensorFilterLen);
-        sensorRFilterAvg = sensorRFilterSum / float(sensorFilterLen);
-        count++;
-        if (count > 30)
-        {
-            heading = calculateHeading(sensorLFilterAvg, sensorRFilterAvg);
-            heading = heading * 57.2957795131;
-            drawText(&display, font_12x16, (std::to_string(heading)).data(), 0, 0);
-            display.sendBuffer();
-            sleep_ms(800);
-            display.clear();
-            display.sendBuffer();
-            sleep_ms(200);
-            ;
-            count = 0;
-        }
-    }
-
-    // Print Left
-    /*
-    drawText(&display, font_12x16, (std::to_string(dist1)).data(), 0, 0);
-    display.sendBuffer();
-    sleep_ms(800);
-    display.clear();
-    display.sendBuffer();
-    sleep_ms(200);
-    // Print Right
-    drawText(&display, font_12x16, (std::to_string(dist3)).data(), 0, 0);
-    display.sendBuffer();
-    sleep_ms(800);
-    display.clear();
-    display.sendBuffer();
-    sleep_ms(200);
-    // Print divisor
-    drawText(&display, font_12x16, (std::to_string(float(170) / float((dist1 + dist3 + (mouseW))))).data(), 0, 0);
-    display.sendBuffer();
-    sleep_ms(800);
-    display.clear();
-    display.sendBuffer();
-    sleep_ms(200);
-    */
-    // Print Angle
-
-    // Play with the numbers
-    // if(headingAverage>0){
-
-    //}
-    // fluffedNumber = 8*pow(headingAverage,1);
-    /*
-    drawText(&display, font_12x16, (std::to_string(headingAverage)).data(), 0, 0);
-    // drawText(&display, font_12x16, (std::to_string(acosf((float(170) / float((dist1 + dist3 + (mouseW))))))).data(), 0, 0);
-    display.sendBuffer();
-    sleep_ms(100);
-    display.clear();
-    display.sendBuffer();*/
-    // sleep_ms(1000);
-
-    // stop();
-    rampUp();
-    move(100);
-    float V1 = 0;
-    int i = 0;
-    while (1)
-    {
-
-        // display.clear();
-        // display.sendBuffer();
-        V1 = maintainStraight();
-        if (dist2 < 40)
-        {
-            rampDown();
-            while (dist2 < 40)
-            {
-                sleep_ms(50);
-                VL53L1X_CheckForDataReady(Sensor2_address, &dataReady2);
-                if (dataReady2 == 1)
-                {
-                    VL53L1X_GetDistance(Sensor2_address, &dist2);
-                }
-            }
-        }
-        // drawText(&display, font_8x8, "G:", 0, 0);
-        // drawText(&display, font_8x8, ((std::to_string(V1*1000))).data(), 0, 9);
-        // display.sendBuffer();
-
-        // sleep_ms(100);
-
-        // drawText(&display, font_8x8, (std::to_string(a*1000)).data(), 0, 0);
-        // display.sendBuffer();
-        // sleep_ms(1000);
-        // display.clear();
-        // display.sendBuffer();
-        // sleep_ms(1000);
-    }
-    // Speedy.stop();
-    while (1)
-    {
-        stop();
-        sleep_ms(100);
-    }
-
-    // Test encoders
-    while (1)
-    {
-        drawText(&display, font_8x8, (std::to_string(ticksL)).data(), 0, 0);
-        drawText(&display, font_8x8, (std::to_string(ticksR)).data(), 0, 10);
-        display.sendBuffer();
-        sleep_ms(5);
-        display.clear();
-        display.sendBuffer();
-
-        /* while((ticksL<900)&&(ticksR<900)){
-
-                 Speedy.move(100);
-         }
-
-         Speedy.stop();*/
-    }
-
-    // main loop to drive forward
-    while (1)
-    {
-        // update sensors
-        VL53L1X_GetDistance(Sensor1_address, &dist1);
-        VL53L1X_GetDistance(Sensor2_address, &dist2);
-        VL53L1X_GetDistance(Sensor3_address, &dist3);
-        drawText(&display, font_8x8, ("1: " + std::to_string(dist1)).data(), 0, 0);
-        drawText(&display, font_8x8, ("2: " + std::to_string(dist2)).data(), 0, 8);
-        drawText(&display, font_8x8, ("3: " + std::to_string(dist3)).data(), 8, 16);
-        display.sendBuffer();
-        // check to see if the distance forward is valid if so move forward
-        if ((dist2 > 80) && (!moving))
-        {
-            // move forward
-            drawText(&display, font_12x16, "Moving!", 0, 0);
-            display.sendBuffer();
-            sleep_ms(200);
-            // Speedy.move(50, 50);
-
-            moving = true;
-        }
-        else if ((dist2 > 80) && (moving))
-        {
-            // try to maintain straight
-            // straighten(100, dist1, dist2);
-        }
-        else
-        {
-            // stop
-            stop();
-            drawText(&display, font_12x16, "Stopping!", 0, 0);
-            display.sendBuffer();
-            sleep_ms(3000);
-            moving = false;
-        }
-
-        VL53L1X_ClearInterrupt(Sensor1_address);
-        VL53L1X_ClearInterrupt(Sensor2_address);
-        VL53L1X_ClearInterrupt(Sensor3_address);
-        display.clear();
-        display.sendBuffer();
-        // sleep_ms(1000);
-    }
-
-    while (1)
-    {
-        VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
-        VL53L1X_CheckForDataReady(Sensor2_address, &dataReady2);
-        VL53L1X_CheckForDataReady(Sensor3_address, &dataReady3);
-        sleep_ms(10);
-        // check to see if sensor 1 has a value
-        if (dataReady1 == 1)
-        {
-            VL53L1X_GetDistance(Sensor1_address, &dist1);
-            dist1 = dist1 - 6.5;
-            drawText(&display, font_5x8, ("1: " + std::to_string(dist1)).data(), 0, 0);
-        }
-        if (dataReady2 == 1)
-        {
-            VL53L1X_GetDistance(Sensor2_address, &dist2);
-            drawText(&display, font_5x8, ("2: " + std::to_string(dist2)).data(), 5, 5);
-        }
-        if (dataReady3 == 1)
-        {
-            VL53L1X_GetDistance(Sensor3_address, &dist3);
-            dist3 = dist3 + 16;
-            drawText(&display, font_5x8, ("3: " + std::to_string(dist3)).data(), 10, 10);
-        }
-        display.sendBuffer();
-        display.clear();
-        VL53L1X_ClearInterrupt(Sensor1_address);
-        VL53L1X_ClearInterrupt(Sensor2_address);
-        VL53L1X_ClearInterrupt(Sensor3_address);
-        sleep_ms(500);
-        display.sendBuffer();
-    }
-
-    while (1)
-    {
-        // move forward on right for 1 second
-        move(0, 100);
-        sleep_ms(1000);
-        move(0, -100);
-        sleep_ms(1000);
-        // pause
-        move(0);
-        sleep_ms(500);
-        // move forward on left for 1/2 second
-        move(100, 0);
-        sleep_ms(500);
-        move(-100, 0);
-        sleep_ms(500);
-        // pause
-        move(0);
-        sleep_ms(500);
-    }
-
-    /*
-    VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
-        VL53L1X_CheckForDataReady(Sensor2_address, &dataReady2);
-        VL53L1X_CheckForDataReady(Sensor3_address, &dataReady3);
-        sleep_ms(10);
-        // check to see if sensor 1 has a value
-        if (dataReady1 == 1)
-        {
-            VL53L1X_GetDistance(Sensor1_address, &dist1);
-            conditionLeft();
-            drawText(&display, font_5x8, ("1: " + std::to_string(dist1)).data(), 0, 0);
-        }
-        if (dataReady2 == 1)
-        {
-            VL53L1X_GetDistance(Sensor2_address, &dist2);
-            drawText(&display, font_5x8, ("2: " + std::to_string(dist2)).data(), 5, 5);
-        }
-        if (dataReady3 == 1)
-        {
-            VL53L1X_GetDistance(Sensor3_address, &dist3);
-            conditionRight();
-            drawText(&display, font_5x8, ("3: " + std::to_string(dist3)).data(), 10, 10);
-        }
-        display.sendBuffer();
-        display.clear();
-        VL53L1X_ClearInterrupt(Sensor1_address);
-        VL53L1X_ClearInterrupt(Sensor2_address);
-        VL53L1X_ClearInterrupt(Sensor3_address);
-        sleep_ms(500);
-        display.sendBuffer();
-    */
-
-    // Measure and print continuously
-    bool first_range = true;
-    while (1)
-    {
-        // Wait until we have new data
-        uint8_t dataReady1;
-        do
-        {
-            status1 = VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
-            sleep_us(1);
-        } while (dataReady1 == 0);
-
-        // Read and display result
-        status1 += VL53L1X_GetResult(Sensor1_address, &results1);
-        // printf("Status = %2d, dist = %5d, Ambient = %2d, Signal = %5d, #ofSpads = %5d\n",
-        //        results.status, results.distance, results.ambient, results.sigPerSPAD, results.numSPADs);
-        drawText(&display, font_12x16, std::to_string(results1.distance).data(), 0, 0);
-        display.sendBuffer();
-        // Clear the sensor for a new measurement
-        status1 += VL53L1X_ClearInterrupt(Sensor1_address);
-        if (first_range)
-        { // Clear twice on first measurement
-            status1 += VL53L1X_ClearInterrupt(Sensor1_address);
-            first_range = false;
-        }
-        sleep_ms(10);
-        display.clear();
-        // display.sendBuffer();
+        // Run a loop ----------------------------------------------
+        // Update the sensors
+        updateAllSensors();
+        heading = calculateHeading();
+        // Display heading
+        dispFloat(heading, display, 500);
     }
 }

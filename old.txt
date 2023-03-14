@@ -1,0 +1,261 @@
+
+    // Print Left
+    /*
+    drawText(&display, font_12x16, (std::to_string(dist1)).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(800);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(200);
+    // Print Right
+    drawText(&display, font_12x16, (std::to_string(dist3)).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(800);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(200);
+    // Print divisor
+    drawText(&display, font_12x16, (std::to_string(float(170) / float((dist1 + dist3 + (mouseW))))).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(800);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(200);
+    */
+    // Print Angle
+
+    // Play with the numbers
+    // if(headingAverage>0){
+
+    //}
+    // fluffedNumber = 8*pow(headingAverage,1);
+    /*
+    drawText(&display, font_12x16, (std::to_string(headingAverage)).data(), 0, 0);
+    // drawText(&display, font_12x16, (std::to_string(acosf((float(170) / float((dist1 + dist3 + (mouseW))))))).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(100);
+    display.clear();
+    display.sendBuffer();*/
+    // sleep_ms(1000);
+
+    // stop();
+    rampUp();
+    move(100);
+    float V1 = 0;
+    int i = 0;
+    while (1)
+    {
+
+        // display.clear();
+        // display.sendBuffer();
+        V1 = maintainStraight();
+        if (dist2 < 40)
+        {
+            rampDown();
+            while (dist2 < 40)
+            {
+                sleep_ms(50);
+                VL53L1X_CheckForDataReady(SensorLD_address, &dataReady2);
+                if (dataReady2 == 1)
+                {
+                    VL53L1X_GetDistance(SensorLD_address, &dist2);
+                }
+            }
+        }
+        // drawText(&display, font_8x8, "G:", 0, 0);
+        // drawText(&display, font_8x8, ((std::to_string(V1*1000))).data(), 0, 9);
+        // display.sendBuffer();
+
+        // sleep_ms(100);
+
+        // drawText(&display, font_8x8, (std::to_string(a*1000)).data(), 0, 0);
+        // display.sendBuffer();
+        // sleep_ms(1000);
+        // display.clear();
+        // display.sendBuffer();
+        // sleep_ms(1000);
+    }
+    // Speedy.stop();
+    while (1)
+    {
+        stop();
+        sleep_ms(100);
+    }
+
+    // Test encoders
+    while (1)
+    {
+        drawText(&display, font_8x8, (std::to_string(ticksL)).data(), 0, 0);
+        drawText(&display, font_8x8, (std::to_string(ticksR)).data(), 0, 10);
+        display.sendBuffer();
+        sleep_ms(5);
+        display.clear();
+        display.sendBuffer();
+
+        /* while((ticksL<900)&&(ticksR<900)){
+
+                 Speedy.move(100);
+         }
+
+         Speedy.stop();*/
+    }
+
+    // main loop to drive forward
+    while (1)
+    {
+        // update sensors
+        VL53L1X_GetDistance(Sensor1_address, &distL);
+        VL53L1X_GetDistance(SensorLD_address, &dist2);
+        VL53L1X_GetDistance(SensorF_address, &dist3);
+        drawText(&display, font_8x8, ("1: " + std::to_string(distL)).data(), 0, 0);
+        drawText(&display, font_8x8, ("2: " + std::to_string(dist2)).data(), 0, 8);
+        drawText(&display, font_8x8, ("3: " + std::to_string(dist3)).data(), 8, 16);
+        display.sendBuffer();
+        // check to see if the distance forward is valid if so move forward
+        if ((dist2 > 80) && (!moving))
+        {
+            // move forward
+            drawText(&display, font_12x16, "Moving!", 0, 0);
+            display.sendBuffer();
+            sleep_ms(200);
+            // Speedy.move(50, 50);
+
+            moving = true;
+        }
+        else if ((dist2 > 80) && (moving))
+        {
+            // try to maintain straight
+            // straighten(100, dist1, dist2);
+        }
+        else
+        {
+            // stop
+            stop();
+            drawText(&display, font_12x16, "Stopping!", 0, 0);
+            display.sendBuffer();
+            sleep_ms(3000);
+            moving = false;
+        }
+
+        VL53L1X_ClearInterrupt(Sensor1_address);
+        VL53L1X_ClearInterrupt(SensorLD_address);
+        VL53L1X_ClearInterrupt(SensorF_address);
+        display.clear();
+        display.sendBuffer();
+        // sleep_ms(1000);
+    }
+
+    while (1)
+    {
+        VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
+        VL53L1X_CheckForDataReady(SensorLD_address, &dataReady2);
+        VL53L1X_CheckForDataReady(SensorF_address, &dataReady3);
+        sleep_ms(10);
+        // check to see if sensor 1 has a value
+        if (dataReady1 == 1)
+        {
+            VL53L1X_GetDistance(Sensor1_address, &distL);
+            distL = distL - 6.5;
+            drawText(&display, font_5x8, ("1: " + std::to_string(distL)).data(), 0, 0);
+        }
+        if (dataReady2 == 1)
+        {
+            VL53L1X_GetDistance(SensorLD_address, &dist2);
+            drawText(&display, font_5x8, ("2: " + std::to_string(dist2)).data(), 5, 5);
+        }
+        if (dataReady3 == 1)
+        {
+            VL53L1X_GetDistance(SensorF_address, &dist3);
+            dist3 = dist3 + 16;
+            drawText(&display, font_5x8, ("3: " + std::to_string(dist3)).data(), 10, 10);
+        }
+        display.sendBuffer();
+        display.clear();
+        VL53L1X_ClearInterrupt(Sensor1_address);
+        VL53L1X_ClearInterrupt(SensorLD_address);
+        VL53L1X_ClearInterrupt(SensorF_address);
+        sleep_ms(500);
+        display.sendBuffer();
+    }
+
+    while (1)
+    {
+        // move forward on right for 1 second
+        move(0, 100);
+        sleep_ms(1000);
+        move(0, -100);
+        sleep_ms(1000);
+        // pause
+        move(0);
+        sleep_ms(500);
+        // move forward on left for 1/2 second
+        move(100, 0);
+        sleep_ms(500);
+        move(-100, 0);
+        sleep_ms(500);
+        // pause
+        move(0);
+        sleep_ms(500);
+    }
+
+    /*
+    VL53L1X_CheckForDataReady(Sensor1_address, &dataReady1);
+        VL53L1X_CheckForDataReady(SensorLD_address, &dataReady2);
+        VL53L1X_CheckForDataReady(SensorF_address, &dataReady3);
+        sleep_ms(10);
+        // check to see if sensor 1 has a value
+        if (dataReady1 == 1)
+        {
+            VL53L1X_GetDistance(Sensor1_address, &dist1);
+            conditionLeft();
+            drawText(&display, font_5x8, ("1: " + std::to_string(dist1)).data(), 0, 0);
+        }
+        if (dataReady2 == 1)
+        {
+            VL53L1X_GetDistance(SensorLD_address, &dist2);
+            drawText(&display, font_5x8, ("2: " + std::to_string(dist2)).data(), 5, 5);
+        }
+        if (dataReady3 == 1)
+        {
+            VL53L1X_GetDistance(SensorF_address, &dist3);
+            conditionRight();
+            drawText(&display, font_5x8, ("3: " + std::to_string(dist3)).data(), 10, 10);
+        }
+        display.sendBuffer();
+        display.clear();
+        VL53L1X_ClearInterrupt(Sensor1_address);
+        VL53L1X_ClearInterrupt(SensorLD_address);
+        VL53L1X_ClearInterrupt(SensorF_address);
+        sleep_ms(500);
+        display.sendBuffer();
+    */
+
+    // Measure and print continuously
+    bool first_range = true;
+    while (1)
+    {
+        // Wait until we have new data
+        uint8_t dataReadyL;
+        do
+        {
+            statusL = VL53L1X_CheckForDataReady(Sensor1_address, &dataReadyL);
+            sleep_us(1);
+        } while (dataReadyL == 0);
+
+        // Read and display result
+        statusL += VL53L1X_GetResult(Sensor1_address, &resultsL);
+        // printf("Status = %2d, dist = %5d, Ambient = %2d, Signal = %5d, #ofSpads = %5d\n",
+        //        results.status, results.distance, results.ambient, results.sigPerSPAD, results.numSPADs);
+        drawText(&display, font_12x16, std::to_string(resultsL.distance).data(), 0, 0);
+        display.sendBuffer();
+        // Clear the sensor for a new measurement
+        statusL += VL53L1X_ClearInterrupt(Sensor1_address);
+        if (first_range)
+        { // Clear twice on first measurement
+            statusL += VL53L1X_ClearInterrupt(Sensor1_address);
+            first_range = false;
+        }
+        sleep_ms(10);
+        display.clear();
+        // display.sendBuffer();
+    }
