@@ -411,6 +411,19 @@ float getX()
     return out;
 }
 
+float getX(float inHeading)
+{
+    float out = 0;
+    float theta = inHeading;
+    // Calculate the distances from the L-DL & R-DR sensors
+    float xp1 = (distL + a) * cosf((180 + theta) * DEG2RAD);
+    float xp2 = (distLD + b) * cosf((phi_D + theta) * DEG2RAD);
+    float xp4 = W - (distRD + b) * cosf((90 - phi_D + theta) * DEG2RAD);
+    float xp5 = W - (distR + a) * cosf((180 + theta) * DEG2RAD);
+    out = (abs(xp1) + abs(xp2) + abs(xp4) + abs(xp5)) / float(4.0);
+    return out;
+}
+
 // Command to repeatedly call to maintain straight
 float maintainStraight()
 {
