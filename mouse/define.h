@@ -10,13 +10,13 @@
 #define S2_ADD 0x31
 
 // Front
-#define S3_SH 4
-#define S3_INT 5
+#define S3_SH 0
+#define S3_INT 1
 #define S3_ADD 0x32
 
 // Right Diagonal
-#define S4_SH 15
-#define S4_INT 14
+#define S4_SH 27
+#define S4_INT 26
 #define S4_ADD 0x33
 
 // Right
