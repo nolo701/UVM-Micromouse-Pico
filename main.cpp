@@ -112,11 +112,41 @@ static float R = 50;     // Radius of Wheel in [mm]
 static float L = 40;     // Distance between each wheel [mm]
 
 // Values to hold the averages which are to be used as the "clean" distances
+
+#define filterSize 5
+float L_hist[filterSize];
+float L_sum = 0;
+uint8_t L_idx_oldest = 0;
 static float distL = 0;
+
+float LD_hist[filterSize];
+float LD_sum = 0;
+uint8_t LD_idx_oldest = 0;
 static float distLD = 0;
+
+float F_hist[filterSize];
+float F_sum = 0;
+uint8_t F_idx_oldest = 0;
 static float distF = 0;
+
+float RD_hist[filterSize];
+float RD_sum = 0;
+uint8_t RD_idx_oldest = 0;
 static float distRD = 0;
+
+float R_hist[filterSize];
+float R_sum = 0;
+uint8_t R_idx_oldest = 0;
 static float distR = 0;
+
+void updateSensorFilter(uint16_t X_sensor, float X_hist[], float &X_sum, uint8_t &X_idx_oldest, float &distX)
+{
+    X_sum = X_sum - X_hist[X_idx_oldest];
+    X_hist[X_idx_oldest] = X_sensor;
+    X_idx_oldest = (X_idx_oldest + 1) % 5;
+    X_sum = X_sum + X_sensor;
+    distX = X_sum / filterSize;
+}
 
 // Calibration Constants
 static float calL = 0;
@@ -331,34 +361,52 @@ static float distFilterSum = 0;
 static float distAvg = 0;
 
 // Example call: distL = measureSensor(SensorL_address);
-float measureSensor(uint8_t sensorAddr)
+void measureSensor(uint8_t sensorAddr)
 {
-    distFilterSum = 0;
     uint16_t measurement = 0;
-    uint16_t measurementsRecorded = 0;
-
-    while (measurementsRecorded < distFilterLength)
+    VL53L1X_CheckForDataReady(sensorAddr, &dataReady);
+    if (dataReady == 1)
     {
 
-        VL53L1X_CheckForDataReady(sensorAddr, &dataReady);
-        if (dataReady == 1)
+        VL53L1X_GetDistance(sensorAddr, &measurement);
+        switch (sensorAddr)
         {
+        case S1_ADD:
+            updateSensorFilter(measurement, L_hist, L_sum, L_idx_oldest, distL);
+            // Put calibration contants after here if nessecary
 
-            VL53L1X_GetDistance(sensorAddr, &measurement);
-            distFilterSum += measurement;
-            measurementsRecorded += 1;
+            break;
+        case S2_ADD:
+            updateSensorFilter(measurement, LD_hist, LD_sum, LD_idx_oldest, distLD);
+            // Put calibration contants after here if nessecary
+            break;
+        case S3_ADD:
+            updateSensorFilter(measurement, F_hist, F_sum, F_idx_oldest, distF);
+            // Put calibration contants after here if nessecary
+            break;
+        case S4_ADD:
+            updateSensorFilter(measurement, RD_hist, RD_sum, RD_idx_oldest, distRD);
+            // Put calibration contants after here if nessecary
+            break;
+        case S5_ADD:
+            updateSensorFilter(measurement, R_hist, R_sum, R_idx_oldest, distR);
+            // Put calibration contants after here if nessecary
+            break;
         }
     }
-    return float(distFilterSum) / float(distFilterLength);
+    else{
+
+    }
 }
 
 void updateAllSensors()
 {
-    distL = measureSensor(SensorL_address) + calL;
-    distLD = measureSensor(SensorLD_address) + calLD;
-    distF = measureSensor(SensorF_address) + calF;
-    distRD = measureSensor(SensorRD_address) + calRD;
-    distR = measureSensor(SensorR_address) + calR;
+    measureSensor(SensorL_address);
+    measureSensor(SensorLD_address);
+    measureSensor(SensorF_address);
+    measureSensor(SensorRD_address);
+    measureSensor(SensorR_address);
+    
 }
 
 float calculateHeading()
@@ -605,9 +653,17 @@ int main()
 
     // Test variables
     float heading = 0;
+
+    while(1){
+        measureSensor(SensorF_address);
+        dispFloat(distF, display, 500);
+        sleep_ms(100);
+    }
+
     while (1)
     {
         gpio_put(25, LEDon);
+        printf("Top of the Loop!");
         // LEDon = !LEDon;
         sleep_ms(200);
         // Run a loop ----------------------------------------------
