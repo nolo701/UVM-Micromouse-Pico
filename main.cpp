@@ -103,7 +103,7 @@ static uint8_t dataReady = 0;
 // -- Mouse Characteristics --
 // Model Parameters
 static float W = 170;    // Width of Maze [mm]
-static float a = 30;     // This is the distance from the sensor focal point for L & R [mm]
+static float a = 33.25;  // This is the distance from the sensor focal point for L & R [mm]
 static float b = 33;     // This is the distance from the sensor focal point for DL & DR [mm]
 static float c = 30;     // This is the distance from the sensor focal point for F [mm]
 static float phi_D = 45; // Angle from 0deg (forwards) of DL & DR
@@ -113,7 +113,7 @@ static float L = 40;     // Distance between each wheel [mm]
 
 // Values to hold the averages which are to be used as the "clean" distances
 
-#define filterSize 5
+#define filterSize 3
 float L_hist[filterSize];
 float L_sum = 0;
 uint8_t L_idx_oldest = 0;
@@ -143,7 +143,7 @@ void updateSensorFilter(uint16_t X_sensor, float X_hist[], float &X_sum, uint8_t
 {
     X_sum = X_sum - X_hist[X_idx_oldest];
     X_hist[X_idx_oldest] = X_sensor;
-    X_idx_oldest = (X_idx_oldest + 1) % 5;
+    X_idx_oldest = (X_idx_oldest + 1) % filterSize;
     X_sum = X_sum + X_sensor;
     distX = X_sum / filterSize;
 }
@@ -167,7 +167,7 @@ static float L_gD = 1;
 static bool L_dir = true;
 static int R_slice = pwm_gpio_to_slice_num(R_F);
 static int L_slice = pwm_gpio_to_slice_num(L_F);
-static float MouseSpeed = 0;
+static float MouseSpeed = 75;
 bool moving = false;
 bool LEDon = false;
 
@@ -353,12 +353,26 @@ void dispFloat(float inFloat, SSD1306 display, int duration)
     sleep_ms(duration * .25);
 }
 
-// Filters & Data storage
-static const int distFilterLength = 5; // Number of values to create an average to remove noise
-// Values to hold the current sums of filters
-static float distFilterSum = 0;
-// Values to hold the averages which are to be used as the "clean" distances
-static float distAvg = 0;
+void dispFloat(std::string inString, float inFloat, SSD1306 display, int duration)
+{
+    drawText(&display, font_8x8, (inString + std::to_string(inFloat)).data(), 0, 0);
+    display.sendBuffer();
+    sleep_ms(duration * .75);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(duration * .25);
+}
+
+void dispDualFloat(std::string inString1, float inFloat1, std::string inString2, float inFloat2, SSD1306 display, int duration)
+{
+    drawText(&display, font_8x8, (inString1 + std::to_string(inFloat1)).data(), 0, 0);
+    drawText(&display, font_8x8, (inString2 + std::to_string(inFloat2)).data(), 0, 9);
+    display.sendBuffer();
+    sleep_ms(duration * .75);
+    display.clear();
+    display.sendBuffer();
+    sleep_ms(duration * .25);
+}
 
 // Example call: distL = measureSensor(SensorL_address);
 void measureSensor(uint8_t sensorAddr)
@@ -394,8 +408,8 @@ void measureSensor(uint8_t sensorAddr)
             break;
         }
     }
-    else{
-
+    else
+    {
     }
 }
 
@@ -406,7 +420,6 @@ void updateAllSensors()
     measureSensor(SensorF_address);
     measureSensor(SensorRD_address);
     measureSensor(SensorR_address);
-    
 }
 
 float calculateHeading()
@@ -455,6 +468,57 @@ float calculateHeading()
     return out;
 }
 
+float calculateHeadingModern()
+{
+    float rat = W / (distR + distL + 2 * a); // compares the width of the maze to the measured width of the maze
+    float theta_degrees = 90 - asinf(rat) * RAD2DEG;
+    float out = theta_degrees;
+    //  LHS Triangle
+    float s1 = distL + a;
+    float s2 = distLD + b;
+    // RHS Triangle
+    float s4 = distRD + b;
+    float s5 = distR + a;
+    // Project onto walls
+    float L_AB = sqrtf(pow(s1, 2) + powf(s2, 2) - 2 * s1 * s2 * cosf(phi_D * DEG2RAD));
+    float L_ED = sqrtf(pow(s4, 2) + powf(s5, 2) - 2 * s4 * s5 * cosf(phi_D * DEG2RAD));
+    // Upper sides
+    float phi_s1 = RAD2DEG * asinf(s1 * sinf(phi_D * DEG2RAD) / L_AB);
+    float phi_s5 = RAD2DEG * asinf(s5 * sinf(phi_D * DEG2RAD) / L_ED);
+
+    if ((abs(out) < 25) || (abs(rat) > 1))
+    {
+        // Complements
+        float phi_s1p = 180 - phi_s1;
+        float phi_s5p = 180 - phi_s5;
+        float thetaL;
+        float thetaR;
+        // Leftward facing
+        if (phi_s1 < phi_s5)
+        {
+            thetaL = 90 - phi_s1p + phi_D;
+            // float thetaR = 90 - phi_s5p + phi_D;
+            thetaR = 45 - phi_s5;
+        }
+        else
+        {
+            thetaL = 45 - phi_s1;
+            thetaR = 90 - phi_s5p + phi_D;
+        }
+        // Edge Guard
+        out = -(thetaL + thetaR) / 2;
+    }
+    else
+    {
+    }
+    if (phi_s1 > phi_s5)
+    {
+        out = -1 * out;
+    }
+    // out = -1 * out;
+    return out;
+}
+
 float getX()
 {
     float out = 0;
@@ -473,13 +537,67 @@ float getX(float inHeading)
     float out = 0;
     float theta = inHeading;
     // Calculate the distances from the L-DL & R-DR sensors
-    float xp1 = (distL + a) * cosf((180 + theta) * DEG2RAD);
-    float xp2 = (distLD + b) * cosf((phi_D + theta) * DEG2RAD);
-    float xp4 = W - (distRD + b) * cosf((90 - phi_D + theta) * DEG2RAD);
-    float xp5 = W - (distR + a) * cosf((180 + theta) * DEG2RAD);
-    out = (abs(xp1) + abs(xp2) + abs(xp4) + abs(xp5)) / float(4.0);
+    float xp1 = (distL + a) * cosf(theta * DEG2RAD);
+    // float xp2 = (distLD + b) * cosf((phi_D + theta) * DEG2RAD);
+    // float xp4 = W - (distRD + b) * cosf((90 - phi_D + theta) * DEG2RAD);
+    float xp5 = W - (distR + a) * cosf(theta * DEG2RAD);
+    // out = (abs(xp1) + abs(xp2) + abs(xp4) + abs(xp5)) / float(4.0);
+    out = (xp1 + xp5) / 2.0;
     return out;
 }
+float A1 = 0.9;
+float B1 = 0.1;
+float C1 = 0.0001;
+float D1 = .5;
+
+float R_position_gain;
+float L_position_gain;
+float R_angle_gain;
+float L_angle_gain;
+float speedL;
+float speedR;
+
+void updateController(float heading, float xpos)
+{
+    // Map position to have little effect around W/2 and increasing at sides
+    R_position_gain = A1 + B1 * (xpos / (W / 2.0));
+    L_position_gain = (A1 + 2*B1) - B1 * (xpos / (W / 2.0));
+    if (heading > 0)
+    {
+        R_angle_gain = C1 * pow(heading, 2) + 1;
+        L_angle_gain = -C1 * pow(heading, 2) + 1;
+    }
+    else
+    {
+        R_angle_gain = -C1 * pow(heading, 2) + 1;
+        L_angle_gain = C1 * pow(heading, 2) + 1;
+    }
+    if(R_angle_gain<D1){
+        R_angle_gain = D1;
+    }
+    if(L_angle_gain<D1){
+        L_angle_gain = D1;
+    }
+    
+    speedL = MouseSpeed*L_angle_gain*L_position_gain;
+    if(speedL>100){
+        speedL = 100;
+    }
+    speedR = MouseSpeed*R_angle_gain*R_position_gain;
+    if(speedR>100){
+        speedR = 100;
+    }
+    if(moving){
+        move(speedL,speedR);
+    }
+    else{
+        rampUp2();
+        moving = true;
+        move(speedL,speedR);
+    }
+    
+}
+
 
 int main()
 {
@@ -653,88 +771,112 @@ int main()
 
     // Test variables
     float heading = 0;
-
-    while(1){
-        measureSensor(SensorF_address);
-        dispFloat(distF, display, 500);
-        sleep_ms(100);
-    }
-
+    float xpos = W / 2;
+    updateAllSensors();
+    updateAllSensors();
+    updateAllSensors();
+    MouseSpeed = 25;
     while (1)
     {
-        gpio_put(25, LEDon);
-        printf("Top of the Loop!");
-        // LEDon = !LEDon;
-        sleep_ms(200);
-        // Run a loop ----------------------------------------------
-        // Update the sensors
+        gpio_put(25, true);
         updateAllSensors();
-        // heading = measureSensor(SensorL_address);
-        // heading = VL53L1X_CheckForDataReady(SensorL_address, &dataReady);
-        float out = 999;
-        float rat = W / (distL + distR + (2 * a));
-        // LED off
-        LEDon = false;
-        if (rat <= 1)
-        {
-
-            float theta_deg = 90 - (asinf(rat)) * RAD2DEG;
-            float out = abs(theta_deg);
-            // Check the diagonal sensors for polarity
-        }
-        // Small angle correct
-
-        if ((out == 999) || (abs(out) < 20))
-        {
-            // LED on
-            LEDon = true;
-            // LHS Triangle
-            float s1 = distL + a;
-            // dispFloat(s1, display, 500);
-            float s2 = distLD + b;
-            // dispFloat(s2, display, 500);
-            //  RHS Triangle
-            float s4 = distRD + b;
-            // dispFloat(s4, display, 500);
-            float s5 = distR + a;
-            // dispFloat(s5, display, 500);
-            //  Triangle Projection on walls
-            float L_AB = sqrtf(powf(s1, 2) + powf(s2, 2) - (2 * s1 * s2 * cosf(phi_D * DEG2RAD)));
-            // dispFloat(L_AB, display, 500);
-            float L_ED = sqrtf(powf(s4, 2) + powf(s5, 2) - (2 * s4 * s5 * cosf(phi_D * DEG2RAD)));
-            // dispFloat(L_ED, display, 500);
-            //  Triangle upper angles
-            float phi_s1 = asinf(s1 * sinf(phi_D * DEG2RAD) / L_AB) * RAD2DEG;
-            // dispFloat(phi_s1, display, 500);
-            float phi_s5 = asinf(s5 * sinf(phi_D * DEG2RAD) / L_ED) * RAD2DEG;
-            // dispFloat(phi_s4, display, 500);
-            //  Solve for angles
-            float theta_L = -90 + phi_s1 + phi_D;
-            // dispFloat(theta_L, display, 500);
-            float theta_R = -90 + phi_s5 + phi_D;
-            // dispFloat(theta_R, display, 500);
-            //  Check for which side is accurate
-            /*
-            if (abs(theta_R - theta_L) > 4)
+        if(distF<50){
+            stop();
+            while (distF<50)
             {
-                //out = MIN(theta_L, theta_R);
-                out = (theta_L + theta_R) / 2.0;
-                // out = 969696969;
+                updateAllSensors();
             }
-            else
-            {
-                out = (theta_L + theta_R) / 2.0;
-                // out = theta_L;
-            }
-            */
-            out = theta_R;
+            sleep_ms(1000);
         }
-        if (distLD < distRD)
-        {
-            out = -1 * out;
-        }
+        gpio_put(25, false);
+        heading = calculateHeadingModern();
+        xpos = getX(heading);
+        updateController(heading, xpos);
 
-        // Display heading
-        dispFloat(out, display, 500);
+        /*
+         dispFloat("DL:", distL, display, 1000);
+         dispFloat("DLD:", distLD, display, 1000);
+         dispFloat("DF:", distF, display, 1000);
+         dispFloat("DRD:", distRD, display, 1000);
+         dispFloat("DR:", distR, display, 1000);
+         */
+
+        
+        //dispDualFloat("Heading:", heading, "X:", xpos, display, 500);
+        // sleep_ms(100);
     }
+
+    /* while (1)
+     {
+         gpio_put(25, LEDon);
+         printf("Top of the Loop!");
+         // LEDon = !LEDon;
+         sleep_ms(200);
+         // Run a loop ----------------------------------------------
+         // Update the sensors
+         updateAllSensors();
+         // heading = measureSensor(SensorL_address);
+         // heading = VL53L1X_CheckForDataReady(SensorL_address, &dataReady);
+         float out = 999;
+         float rat = W / (distL + distR + (2 * a));
+         // LED off
+         LEDon = false;
+         if (rat <= 1)
+         {
+
+             float theta_deg = 90 - (asinf(rat)) * RAD2DEG;
+             float out = abs(theta_deg);
+             // Check the diagonal sensors for polarity
+         }
+         // Small angle correct
+
+         if ((out == 999) || (abs(out) < 20))
+         {
+             // LED on
+             LEDon = true;
+             // LHS Triangle
+             float s1 = distL + a;
+             // dispFloat(s1, display, 500);
+             float s2 = distLD + b;
+             // dispFloat(s2, display, 500);
+             //  RHS Triangle
+             float s4 = distRD + b;
+             // dispFloat(s4, display, 500);
+             float s5 = distR + a;
+             // dispFloat(s5, display, 500);
+             //  Triangle Projection on walls
+             float L_AB = sqrtf(powf(s1, 2) + powf(s2, 2) - (2 * s1 * s2 * cosf(phi_D * DEG2RAD)));
+             // dispFloat(L_AB, display, 500);
+             float L_ED = sqrtf(powf(s4, 2) + powf(s5, 2) - (2 * s4 * s5 * cosf(phi_D * DEG2RAD)));
+             // dispFloat(L_ED, display, 500);
+             //  Triangle upper angles
+             float phi_s1 = asinf(s1 * sinf(phi_D * DEG2RAD) / L_AB) * RAD2DEG;
+             // dispFloat(phi_s1, display, 500);
+             float phi_s5 = asinf(s5 * sinf(phi_D * DEG2RAD) / L_ED) * RAD2DEG;
+             // dispFloat(phi_s4, display, 500);
+             //  Solve for angles
+             float theta_L = -90 + phi_s1 + phi_D;
+             // dispFloat(theta_L, display, 500);
+             float theta_R = -90 + phi_s5 + phi_D;
+             // dispFloat(theta_R, display, 500);
+             //  Check for which side is accurate
+             /*
+             if (abs(theta_R - theta_L) > 4)
+             {
+                 //out = MIN(theta_L, theta_R);
+                 out = (theta_L + theta_R) / 2.0;
+                 // out = 969696969;
+             }
+             else
+             {
+                 out = (theta_L + theta_R) / 2.0;
+                 // out = theta_L;
+             }
+
+             out = theta_R;
+         }
+
+         // Display heading
+         dispFloat(out, display, 500);
+     }*/
 }
