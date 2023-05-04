@@ -547,7 +547,7 @@ float getX(float inHeading)
 }
 float A1 = 0.9;
 float B1 = 0.1;
-float C1 = 0.0001;
+float C1 = 0.000002;
 float D1 = .5;
 
 float R_position_gain;
@@ -560,9 +560,9 @@ float speedR;
 void updateController(float heading, float xpos)
 {
     // Map position to have little effect around W/2 and increasing at sides
-    R_position_gain = A1 + B1 * (xpos / (W / 2.0));
-    L_position_gain = (A1 + 2*B1) - B1 * (xpos / (W / 2.0));
-    if (heading > 0)
+    L_angle_gain = A1 + B1 * (xpos / (W / 2.0));
+    R_angle_gain = (A1 + 2*B1) - B1 * (xpos / (W / 2.0));
+    /*if (heading > 0)
     {
         R_angle_gain = C1 * pow(heading, 2) + 1;
         L_angle_gain = -C1 * pow(heading, 2) + 1;
@@ -578,7 +578,10 @@ void updateController(float heading, float xpos)
     if(L_angle_gain<D1){
         L_angle_gain = D1;
     }
-    
+    */
+    L_position_gain = -C1*powf(xpos-W/2.0,3)+1;
+    R_position_gain = C1*powf(xpos-W/2.0,3)+1;
+
     speedL = MouseSpeed*L_angle_gain*L_position_gain;
     if(speedL>100){
         speedL = 100;
